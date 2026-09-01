@@ -23,11 +23,40 @@
       <p id="model-status-text" class="status-detail"></p>
     </section>
 
-    <section class="placeholder-grid" aria-label="Upcoming demo areas">
-      <div class="placeholder-card">
-        <h3>Scenario</h3>
-        <p class="coming-soon">Coming in a later M5 stage.</p>
+    <section id="scenario-panel" class="status-card">
+      <h2>Scenario</h2>
+
+      <div id="scenario-select-row">
+        <label for="scenario-select">Choose a scenario</label>
+        <select id="scenario-select" disabled>
+          <option>Loading&hellip;</option>
+        </select>
+        <button id="start-scenario-btn" type="button" disabled>Start Scenario</button>
       </div>
+      <p id="scenario-description" class="status-detail"></p>
+
+      <div id="run-view" hidden>
+        <p id="run-progress" class="status-detail"></p>
+
+        <div id="current-segment-card" class="segment-card" hidden>
+          <p class="segment-role" id="current-segment-role"></p>
+          <p class="segment-text" id="current-segment-text"></p>
+          <p class="model-response-note">Model response will appear in M5C</p>
+          <button id="next-segment-btn" type="button">Next Segment</button>
+        </div>
+
+        <div id="completed-message" hidden>
+          <p class="status-text status-ok">Scenario complete.</p>
+          <button id="start-another-btn" type="button">Start another scenario</button>
+        </div>
+
+        <div id="transcript" aria-label="Completed transcript"></div>
+      </div>
+
+      <p id="scenario-error" class="status-text status-error" hidden></p>
+    </section>
+
+    <section class="placeholder-grid" aria-label="Upcoming demo areas">
       <div class="placeholder-card">
         <h3>Memory OFF / ON</h3>
         <p class="coming-soon">Coming in a later M5 stage.</p>
@@ -45,8 +74,9 @@
 
   <footer>
     <p>
-      M5A: web shell and status API only. Scenario, memory, and provider
-      execution are not yet wired to this page.
+      M5B: scenario runs are Memory OFF only, in-memory, and reset on server
+      restart. Memory ON, the model response, and comparison are not yet
+      wired to this page.
     </p>
   </footer>
 
