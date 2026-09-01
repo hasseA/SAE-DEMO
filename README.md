@@ -4,7 +4,7 @@ A standalone Nebius hackathon project demonstrating SAE (Stable Emotion) Emotion
 
 ## Status
 
-M3A: Nebius/NVIDIA transport layer implemented (`sae_demo/config.py`, `sae_demo/nebius_provider.py`), with offline mocked tests. No UI, conversation controller, or Emotional Memory consumer exists yet — this milestone is transport-only.
+M3B: backend scenario engine implemented (`sae_demo/scenario.py`, `sae_demo/scenario_engine.py`), in-memory, with offline tests. M3A: Nebius/NVIDIA provider transport layer implemented (`sae_demo/config.py`, `sae_demo/nebius_provider.py`). No UI, conversation controller, Emotional Memory consumer, or Scenario Wizard exists yet — the scenario engine only loads and runs scenarios that are already fully written, and is not yet wired to the provider.
 
 ## What this project is
 
@@ -21,7 +21,7 @@ SAE-DEMO is a clean-room project, independently implemented. It is not a fork, c
 ## Documents
 
 - `docs/PRODUCT_SPEC.md` — product purpose, user flow, MVP scope, explicit non-goals
-- `docs/ARCHITECTURE.md` — component-level architecture for the independent demo
+- `docs/ARCHITECTURE.md` — component-level architecture for the independent demo, including the M3B scenario engine and the future Scenario Wizard boundary
 - `docs/DISCLOSURE_BOUNDARY.md` — short operational rules for what may/may not enter this repository
 
 ## Nebius/NVIDIA provider setup (M3A)
@@ -44,3 +44,9 @@ These are the package defaults; they can be overridden via environment variables
 4. Optionally run the manual live smoke test against the real API (uses your real key and incurs provider usage): `python scripts/smoke_nebius.py`
 
 The provider treats any unexpected non-null `reasoning` field in a response as a configuration/safety warning rather than a fatal error, and logs a warning if one appears.
+
+## Backend scenario engine (M3B)
+
+`sae_demo/scenario.py` defines a clean-room, demo-specific scenario schema (id, title, ordered segments, per-segment semantic-role label and edit permission, `frozen`/`interactive` mode) with structural validation that reports every problem at once, for a future wizard UI to surface. `sae_demo/scenario_engine.py` loads one validated scenario in memory, exposes/advances its segments one at a time, supports editing a not-yet-sent segment in `interactive` mode while `frozen` mode preserves exact text for reproducible replay, and produces a neutral run trace recording exactly what text was sent per segment. The engine is independent of the Nebius provider adapter — attaching a model response to a sent segment happens after the fact via `record_model_response`, and the engine itself never makes a provider call.
+
+Two entirely synthetic scenario fixtures (`tests/fixtures/synthetic_scenarios.py`) are used only to exercise the engine in offline tests; they are not sent to any model at this stage.
