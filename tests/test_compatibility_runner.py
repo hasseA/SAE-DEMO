@@ -14,11 +14,11 @@ nothing from prior behavior, and that a supplied payload string is
 passed through the conversation history unmodified, as its own
 isolated message.
 
-Behavioral-use-policy and payload-integrity tests (M4A) likewise use
-only synthetic fake payload strings -- including ones deliberately
-shaped like private material (numbers, labels, unusual Unicode) to
-prove pass-through fidelity -- never any real Emotional Memory
-content.
+Behavioral-use-policy and payload-integrity tests (M4A, extended M4B)
+likewise use only synthetic fake payload strings -- including ones
+deliberately shaped like private material (numbers, labels, unusual
+Unicode) to prove pass-through fidelity -- never any real Emotional
+Memory content.
 """
 
 import hashlib
@@ -495,8 +495,9 @@ _FAKE_UNICODE_PAYLOAD = (
 
 
 def test_behavioral_use_policy_is_off_by_default():
-    """A caller that doesn't ask for the M4A policy sees no new message
-    -- this is what keeps every pre-M4A test above passing unmodified.
+    """A caller that doesn't ask for the M4A/M4B policy sees no new
+    message -- this is what keeps every pre-M4A test above passing
+    unmodified.
     """
 
     responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
@@ -806,3 +807,141 @@ def test_existing_tests_semantics_full_suite_still_reflects_pre_m4a_shapes():
         "You are participating in a short scripted conversation. Respond "
         "naturally and concisely to each message as it arrives."
     )
+
+
+# --- scenario-grounding rule (M4B) ------------------------------------------
+#
+# These tests only inspect the policy TEXT and the runner's existing
+# message-placement/symmetry behavior (already covered structurally
+# above and unchanged by M4B). Per the M4B instructions, no test here
+# attempts to simulate whether a mocked LLM actually obeys the policy --
+# that requires a live model and is explicitly out of scope until a
+# later, separate live test.
+
+def test_policy_contains_a_current_conversation_grounding_constraint():
+    """Requirement 5: the policy states a generic rule that concrete
+    details must stay grounded in what the user actually provided in
+    the current conversation.
+    """
+
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    assert "grounded in what the user has actually provided" in lowered
+    assert "this conversation" in lowered
+    # The specific categories of concrete detail the rule names.
+    for category in ("people", "places", "events", "objects", "remembered scenes"):
+        assert category in lowered
+
+
+def test_policy_still_contains_no_private_vocabulary_after_m4b():
+    """Requirement 6, re-checked against the M4B-extended text (not
+    just the M4A prefix) -- the added grounding sentence must not
+    introduce any private SAE vocabulary either.
+    """
+
+    forbidden_terms = [
+        "Emotional Memory",
+        "SAE",
+        "XNET",
+        "XINJ",
+        "anchor",
+        "kernel",
+        "weight",
+        "emotion_node",
+    ]
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    for term in forbidden_terms:
+        assert term.lower() not in lowered
+
+
+def test_policy_does_not_prohibit_emotional_interpretation_or_relational_behavior():
+    """Requirement 7: the grounding rule constrains invented concrete
+    narrative facts, not emotional engagement -- the policy explicitly
+    says background context may still shape interpretation, tone, and
+    emotional/relational stance, and contains no blanket prohibition
+    against emotional or relational behavior.
+    """
+
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    # Affirmatively preserved.
+    assert "interpretation" in lowered
+    assert "tone" in lowered
+    assert "emotional" in lowered and "stance" in lowered
+    assert "relational" in lowered
+    # No blanket ban on emotional or relational engagement.
+    banned_phrasings = [
+        "do not express emotion",
+        "do not show emotion",
+        "avoid emotion",
+        "do not react emotionally",
+        "no emotional",
+        "without emotion",
+        "do not engage emotionally",
+    ]
+    for phrasing in banned_phrasings:
+        assert phrasing not in lowered
+
+
+def test_existing_anti_recitation_instruction_remains_present_in_m4b_policy():
+    """Requirement 8: the M4A anti-recitation sentence must still be
+    present, verbatim, inside the M4B-extended policy -- M4B only adds
+    to it, it does not remove or reword the existing function.
+    """
+
+    anti_recitation_sentence = (
+        "Do not quote, list, summarize, or explain that context, or "
+        "otherwise expose its content or structure, unless the user "
+        "explicitly asks you to."
+    )
+    assert anti_recitation_sentence in DEFAULT_BEHAVIORAL_USE_POLICY
+
+    # And the M4A opening framing sentence is likewise untouched.
+    opening_sentence = (
+        "Some conversations include supplied background context alongside "
+        "the messages below."
+    )
+    assert DEFAULT_BEHAVIORAL_USE_POLICY.startswith(opening_sentence)
+
+
+def test_grounding_rule_permits_exception_when_user_explicitly_asks():
+    """The new rule, like the M4A rule before it, carries the same
+    explicit-ask escape hatch -- it is not an absolute, unconditional
+    prohibition.
+    """
+
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    assert "unless the user explicitly asks" in lowered
+
+
+def test_m4b_policy_symmetry_matches_m4a_placement_and_role_shape():
+    """Confirms M4B changed only the policy TEXT: message placement,
+    role shape (all-system, isolated payload message), and OFF/ON
+    symmetry are identical to the M4A structural tests above -- no
+    context-placement change was introduced in M4B.
+    """
+
+    responses_off = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider_off, client_off = _provider_with(responses_off)
+    runner_off = CompatibilityRunner(
+        provider_off,
+        system_message=None,
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
+    )
+    runner_off.run(_small_scenario())
+
+    responses_on = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider_on, client_on = _provider_with(responses_on)
+    runner_on = CompatibilityRunner(
+        provider_on,
+        system_message=None,
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
+        memory_payload=_FAKE_NETWORK_LIKE_PAYLOAD,
+        memory_payload_sha256=hashlib.sha256(
+            _FAKE_NETWORK_LIKE_PAYLOAD.encode("utf-8")
+        ).hexdigest(),
+    )
+    runner_on.run(_small_scenario())
+
+    off_roles = [m["role"] for m in client_off.completions.calls[0]["messages"]]
+    on_roles = [m["role"] for m in client_on.completions.calls[0]["messages"]]
+    assert off_roles == ["system", "user"]
+    assert on_roles == ["system", "system", "system", "user"]

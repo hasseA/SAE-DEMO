@@ -21,17 +21,27 @@ its own message, unmodified. With no memory payload supplied (the
 default), a run is Memory OFF: only the scenario's own segment text
 is ever sent, exactly as before this stage.
 
-Behavioral-use policy and payload integrity (M4A): the runner can
-optionally be given one short, generic, independently-written
-instruction governing how any supplied background context should be
-used (`behavioral_use_policy`; off by default so existing callers are
-unaffected). A caller that wants it is expected to pass the *same*
-value whether or not a memory payload is also supplied, so it is never
-a condition-specific confound between Memory OFF and Memory ON runs --
-`scripts/run_compatibility.py` does this unconditionally. This
-instruction is consumption *policy*; it is not Emotional Memory and
-carries no private structural knowledge. When a caller also supplies
-the expected SHA-256 of the memory payload (as returned by
+Behavioral-use policy and payload integrity (M4A, extended M4B): the
+runner can optionally be given one short, generic, independently-
+written instruction governing how any supplied background context
+should be used (`behavioral_use_policy`; off by default so existing
+callers are unaffected). A caller that wants it is expected to pass
+the *same* value whether or not a memory payload is also supplied, so
+it is never a condition-specific confound between Memory OFF and
+Memory ON runs -- `scripts/run_compatibility.py` does this
+unconditionally. This instruction is consumption *policy*; it is not
+Emotional Memory and carries no private structural knowledge. M4B
+extends its text (only its text -- no placement, parameter, or
+signature change) with one additional, generic rule: concrete
+narrative details in a response (people, places, events, objects,
+remembered scenes) should stay grounded in what the user has actually
+provided in the current conversation, not be invented from background
+context, unless the user explicitly asks about that background
+context. Background context influencing interpretation, tone, or
+emotional/relational stance remains explicitly allowed -- this is a
+grounding constraint on invented concrete narrative facts, not a
+restriction on emotional engagement. When a caller also supplies the
+expected SHA-256 of the memory payload (as returned by
 `sae_demo/memory_loader.py` at load time), the runner independently
 re-verifies that the exact string it is about to place in the
 conversation still matches that hash, and refuses to proceed
@@ -69,27 +79,46 @@ DEFAULT_SYSTEM_MESSAGE = (
 # and does not resemble, SAE's private XINJ framing text.
 DEFAULT_MEMORY_CONTEXT_LABEL = "Additional context for this conversation:"
 
-# M4A: a single, generic, independently-written behavioral-use policy
-# governing how any supplied background context should be used. This
-# is deliberately worded to make sense whether or not any background
-# context is actually present in a given run, so it can (and should)
-# be sent identically for Memory OFF and Memory ON -- only the
-# presence/absence of the context itself differs between conditions,
-# never this instruction. It says nothing about what kind of context
-# it might be, how it was produced, or what it might contain: it
-# carries no private structural knowledge (no mention of emotion
-# nodes, anchors, weights, XNET/XINJ, or any other SAE-specific
+# M4A, extended M4B: a single, generic, independently-written
+# behavioral-use policy governing how any supplied background context
+# should be used. This is deliberately worded to make sense whether or
+# not any background context is actually present in a given run, so it
+# can (and should) be sent identically for Memory OFF and Memory ON --
+# only the presence/absence of the context itself differs between
+# conditions, never this instruction. It says nothing about what kind
+# of context it might be, how it was produced, or what it might
+# contain: it carries no private structural knowledge (no mention of
+# emotion nodes, anchors, weights, XNET/XINJ, or any other SAE-specific
 # vocabulary), and it adds no emotional content of its own. This
 # instruction is consumption *policy* -- a public, generic statement
 # about how this demo's consumer should treat *any* supplied context
 # -- and is not itself Emotional Memory or a substitute for it.
+#
+# M4B adds one thing to the M4A text: a scenario-grounding rule. M3D's
+# private compatibility testing showed that, after M4A's anti-
+# recitation rule reduced explicit representation recitation (numeric
+# weights, "emotional map" language, representation-like tables), the
+# model could still introduce concrete narrative details -- people,
+# places, events, objects, remembered scenes -- that trace to
+# background context rather than to anything in the current
+# conversation. The distinction this rule preserves: background
+# context (state) may influence interpretation, salience, tone, and
+# relational/emotional stance; it should not supply invented concrete
+# narrative facts presented as though they came from the current
+# conversation. This rule does not restrict emotional interpretation
+# or relational behavior -- only invented, unprompted concrete detail.
 DEFAULT_BEHAVIORAL_USE_POLICY = (
     "Some conversations include supplied background context alongside "
     "the messages below. If present, let it inform your responses "
     "naturally, the way unspoken context would, without changing the "
     "topic. Do not quote, list, summarize, or explain that context, or "
     "otherwise expose its content or structure, unless the user "
-    "explicitly asks you to."
+    "explicitly asks you to. Keep concrete details in your response -- "
+    "people, places, events, objects, and remembered scenes -- grounded "
+    "in what the user has actually provided in this conversation. "
+    "Background context may still shape your interpretation, tone, and "
+    "emotional or relational stance, but should not introduce concrete "
+    "details of its own unless the user explicitly asks about it."
 )
 
 DEFAULT_MAX_TOKENS = 200
@@ -228,7 +257,7 @@ class CompatibilityRunner:
         # Opt-in (default None) so constructing a CompatibilityRunner
         # without this argument behaves exactly as it did before M4A --
         # no new message is added and no existing behavior changes. A
-        # caller that wants the M4A behavioral-use policy (see
+        # caller that wants the M4A/M4B behavioral-use policy (see
         # DEFAULT_BEHAVIORAL_USE_POLICY) is responsible for passing the
         # *same* value here regardless of whether memory_payload is also
         # supplied, so the policy is never a condition-specific

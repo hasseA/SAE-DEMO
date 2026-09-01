@@ -1,4 +1,4 @@
-# Compatibility Harness (M3C, extended in M3D with an opaque memory path, M4A with a behavioral-use policy)
+# Compatibility Harness (M3C, extended in M3D with an opaque memory path, M4A with a behavioral-use policy, M4B with a scenario-grounding rule)
 
 ## What this is
 
@@ -18,19 +18,29 @@ As of M3D, `CompatibilityRunner` can optionally be given an already-loaded, opaq
 
 **These are two separate things, and this project keeps them separate on purpose.**
 
-Emotional Memory is the prepared artifact itself — the existing, unchanged, opaque working representation loaded from `.local/memory/` via `sae_demo/memory_loader.py`. M4A does not rewrite, summarize, sanitize, or otherwise transform it in any way; the exact payload string a caller loaded is the exact string this project sends, verified byte-for-byte (see "Payload integrity" below). It is not "just a prompt" — this project has no opinion on, and no need to know, what it structurally is; it is treated as an opaque input, exactly as before M4A.
+Emotional Memory is the prepared artifact itself — the existing, unchanged, opaque working representation loaded from `.local/memory/` via `sae_demo/memory_loader.py`. Neither M4A nor M4B rewrite, summarize, sanitize, or otherwise transform it in any way; the exact payload string a caller loaded is the exact string this project sends, verified byte-for-byte (see "Payload integrity" below). It is not "just a prompt" — this project has no opinion on, and no need to know, what it structurally is; it is treated as an opaque input, exactly as before M4A.
 
-The behavioral-use policy is different: it is one short, generic, independently-written instruction this project's *consumer* sends about how *any* supplied background context — memory or otherwise — should be used in a response. It says nothing about what the context is, how it was produced, or what it contains. It is public-safe consumption policy authored entirely within SAE-DEMO, not a rendering, rewording, or approximation of anything from the private SAE repository. See `sae_demo/compatibility_runner.DEFAULT_BEHAVIORAL_USE_POLICY` for its exact text.
+The behavioral-use policy is different: it is one short, generic, independently-written instruction this project's *consumer* sends about how *any* supplied background context — memory or otherwise — should be used in a response. It says nothing about what the context is, how it was produced, or what it contains. It is public-safe consumption policy authored entirely within SAE-DEMO, not a rendering, rewording, or approximation of anything from the private SAE repository. **This is a consumption-layer behavior rule. It does not modify Emotional Memory.** See `sae_demo/compatibility_runner.DEFAULT_BEHAVIORAL_USE_POLICY` for its exact text.
 
 **Comparison symmetry.** The behavioral-use policy is off by default at the `CompatibilityRunner` level (so it never changes any pre-M4A test's behavior), but `scripts/run_compatibility.py` sends it unconditionally and identically for `--memory off` and for `--memory profile`/`network` alike — it is never a condition-specific difference between a Memory OFF and a Memory ON run. Only the presence of the memory payload itself differs between conditions.
 
-**Context placement.** Both the behavioral-use policy and, when present, the memory context label and the opaque payload are each their own isolated `system`-role message, sent once, ahead of the scenario. `system` is the strongest context-isolation role the current Nebius adapter passes through; this project does not invent or rely on any other role.
+**Context placement.** Both the behavioral-use policy and, when present, the memory context label and the opaque payload are each their own isolated `system`-role message, sent once, ahead of the scenario. `system` is the strongest context-isolation role the current Nebius adapter passes through; this project does not invent or rely on any other role. M4B did not change this placement.
 
 **Payload integrity.** `scripts/run_compatibility.py` passes the memory artifact's already-verified `content_sha256` (from `sae_demo/memory_loader.py`'s own load-time check) through to `CompatibilityRunner`, which independently re-hashes the exact string it is about to place into the conversation and refuses to send it — making no provider call for that turn — if the hash no longer matches. This is a hash comparison only; the runner never parses the payload to perform it.
 
+## Scenario-grounding rule (M4B)
+
+M3D's private compatibility testing showed that, even after M4A's anti-recitation rule reduced explicit representation recitation (numeric weights, "emotional map" language, representation-like tables), the model could still introduce concrete narrative details — people, places, events, objects, remembered scenes — that trace to background context rather than to anything actually present in the current conversation.
+
+The intended boundary, preserved by M4B: **background context may influence behavior and interpretation** — tone, salience, emotional or relational stance, which current-scenario details feel important — **but concrete narrative facts in the assistant's response should remain grounded in the active user conversation**, unless the user explicitly asks the assistant to discuss the background context directly. In short: state may transfer; the source story should not be invented into the current story.
+
+M4B extends `DEFAULT_BEHAVIORAL_USE_POLICY`'s *text only* — no new constructor parameter, no context-placement change, no change to memory handling. The existing M4A anti-recitation sentences remain present verbatim; one additional, generic sentence is appended stating the grounding constraint. **This is a consumption-layer behavior rule. It does not modify Emotional Memory** — the payload itself, and its SHA-256, are unchanged by this stage.
+
+This rule constrains *invented concrete detail*, not emotional engagement: the policy explicitly states that background context may still shape interpretation, tone, and emotional or relational stance. Whether the model actually follows this instruction is a live-model question, out of scope for this stage's offline tests — see "Who runs the live test" below.
+
 ## Who runs the live test
 
-This harness makes real API calls and is not exercised by Claude. `scripts/run_compatibility.py` is a human-run CLI: Hasse runs it locally, with his own `NEBIUS_API_KEY` configured in `.env`, to check compatibility against the live Nebius/NVIDIA endpoint. See the README's compatibility-runner sections for usage. Only the offline, fully mocked test suite (`tests/test_compatibility_runner.py`, `tests/test_memory_loader.py`) is run automatically, and it makes no network calls.
+This harness makes real API calls and is not exercised by Claude. `scripts/run_compatibility.py` is a human-run CLI: Hasse runs it locally, with his own `NEBIUS_API_KEY` configured in `.env`, to check compatibility against the live Nebius/NVIDIA endpoint. See the README's compatibility-runner sections for usage. Only the offline, fully mocked test suite (`tests/test_compatibility_runner.py`, `tests/test_memory_loader.py`) is run automatically, and it makes no network calls. Whether the target model actually honors the anti-recitation and scenario-grounding rules is not something a mocked-provider test can demonstrate; that requires a live run, deliberately deferred to a later, separate stage.
 
 ## No private SAE content in tracked source
 
