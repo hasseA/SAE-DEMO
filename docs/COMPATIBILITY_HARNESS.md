@@ -1,4 +1,4 @@
-# Compatibility Harness (M3C, extended in M3D with an opaque memory path)
+# Compatibility Harness (M3C, extended in M3D with an opaque memory path, M4A with a behavioral-use policy)
 
 ## What this is
 
@@ -14,12 +14,26 @@ As of M3D, `CompatibilityRunner` can optionally be given an already-loaded, opaq
 
 **No live Memory ON run has been executed as part of this or any prior stage.** This is implementation and offline-tested wiring only. A live compatibility check with memory attached is a deliberate, separate, human-run action, and remains scoped exactly as narrowly as the Memory OFF live check described below.
 
+## Emotional Memory vs. behavioral-use policy (M4A)
+
+**These are two separate things, and this project keeps them separate on purpose.**
+
+Emotional Memory is the prepared artifact itself — the existing, unchanged, opaque working representation loaded from `.local/memory/` via `sae_demo/memory_loader.py`. M4A does not rewrite, summarize, sanitize, or otherwise transform it in any way; the exact payload string a caller loaded is the exact string this project sends, verified byte-for-byte (see "Payload integrity" below). It is not "just a prompt" — this project has no opinion on, and no need to know, what it structurally is; it is treated as an opaque input, exactly as before M4A.
+
+The behavioral-use policy is different: it is one short, generic, independently-written instruction this project's *consumer* sends about how *any* supplied background context — memory or otherwise — should be used in a response. It says nothing about what the context is, how it was produced, or what it contains. It is public-safe consumption policy authored entirely within SAE-DEMO, not a rendering, rewording, or approximation of anything from the private SAE repository. See `sae_demo/compatibility_runner.DEFAULT_BEHAVIORAL_USE_POLICY` for its exact text.
+
+**Comparison symmetry.** The behavioral-use policy is off by default at the `CompatibilityRunner` level (so it never changes any pre-M4A test's behavior), but `scripts/run_compatibility.py` sends it unconditionally and identically for `--memory off` and for `--memory profile`/`network` alike — it is never a condition-specific difference between a Memory OFF and a Memory ON run. Only the presence of the memory payload itself differs between conditions.
+
+**Context placement.** Both the behavioral-use policy and, when present, the memory context label and the opaque payload are each their own isolated `system`-role message, sent once, ahead of the scenario. `system` is the strongest context-isolation role the current Nebius adapter passes through; this project does not invent or rely on any other role.
+
+**Payload integrity.** `scripts/run_compatibility.py` passes the memory artifact's already-verified `content_sha256` (from `sae_demo/memory_loader.py`'s own load-time check) through to `CompatibilityRunner`, which independently re-hashes the exact string it is about to place into the conversation and refuses to send it — making no provider call for that turn — if the hash no longer matches. This is a hash comparison only; the runner never parses the payload to perform it.
+
 ## Who runs the live test
 
 This harness makes real API calls and is not exercised by Claude. `scripts/run_compatibility.py` is a human-run CLI: Hasse runs it locally, with his own `NEBIUS_API_KEY` configured in `.env`, to check compatibility against the live Nebius/NVIDIA endpoint. See the README's compatibility-runner sections for usage. Only the offline, fully mocked test suite (`tests/test_compatibility_runner.py`, `tests/test_memory_loader.py`) is run automatically, and it makes no network calls.
 
 ## No private SAE content in tracked source
 
-The system message sent with every run is a short, generic, public-safe sentence (`sae_demo/compatibility_runner.DEFAULT_SYSTEM_MESSAGE`) — it is not derived from, and does not resemble, SAE's private Frame measurement prompt or any other private system prompt. The short label placed ahead of an injected memory payload (`DEFAULT_MEMORY_CONTEXT_LABEL`) is likewise independently written and generic, and is not modeled on SAE's private XINJ framing text. The two fixtures this stage's tests and CLI use (`greenhouse`, `new_studio`) are the entirely synthetic scenarios introduced in M3B; no Experiment 8 material, XNET/XINJ content, or other private SAE data is read, copied, or referenced by any tracked file in this repository.
+The system message sent with every run is a short, generic, public-safe sentence (`sae_demo/compatibility_runner.DEFAULT_SYSTEM_MESSAGE`) — it is not derived from, and does not resemble, SAE's private Frame measurement prompt or any other private system prompt. The short label placed ahead of an injected memory payload (`DEFAULT_MEMORY_CONTEXT_LABEL`) and the behavioral-use policy (`DEFAULT_BEHAVIORAL_USE_POLICY`) are likewise independently written and generic, and are not modeled on SAE's private XINJ framing text or any private structural vocabulary. The two fixtures this stage's tests and CLI use (`greenhouse`, `new_studio`) are the entirely synthetic scenarios introduced in M3B; no Experiment 8 material, XNET/XINJ content, or other private SAE data is read, copied, or referenced by any tracked file in this repository.
 
 A memory payload, when one is supplied at runtime via `--memory-file`, comes only from a local, gitignored file under `.local/memory/` (see `docs/RUNTIME_DATA_BOUNDARY.md`) that the operator points at explicitly — it is never read from, written to, or embedded in tracked source, and this repository's tests use only synthetic fake payload strings, never any real artifact content.

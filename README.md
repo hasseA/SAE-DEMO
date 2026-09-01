@@ -4,7 +4,7 @@ A standalone Nebius hackathon project demonstrating SAE (Stable Emotion) Emotion
 
 ## Status
 
-M3D.1: fixed a Windows-only `UnicodeEncodeError` in the compatibility CLI's console output (`scripts/run_compatibility.py`), plus an associated mojibake risk, by reconfiguring stdout/stderr to UTF-8 (`sae_demo/console_io.py`) before printing. No compatibility semantics, memory injection, provider parameters, or scenario content changed. M3D: opaque private-memory artifact loader (`sae_demo/memory_loader.py`) and matching compatibility-runner memory-injection support added. The loader and runner have no knowledge of any private SAE schema — they validate/pass through a generic, versioned envelope (`format_version`, `representation`, `content_sha256`, `payload`) and treat `payload` as opaque text. No private artifact is ever tracked by Git; artifacts live only under the local, gitignored `.local/memory/` root. M3C.1: local-private runtime data boundary hardened — a single gitignored `.local/` root (`runs/`, `memory/`, `generated/`, `tmp/`), a generic runtime-path helper (`sae_demo/runtime_paths.py`), and a deterministic disclosure/safety checker (`sae_demo/disclosure_guard.py`, `scripts/check_disclosure_boundary.py`). M3C: synthetic compatibility runner implemented (`sae_demo/compatibility_runner.py`), supporting Memory OFF and, as of M3D, an opaque Memory ON path. M3B: backend scenario engine implemented. M3A: Nebius/NVIDIA provider transport layer implemented. No UI or Scenario Wizard exists yet.
+M4A: added a generic, public-safe behavioral-use policy and a runtime payload-integrity check around the *unchanged* opaque memory payload. The Emotional Memory artifact itself is not modified, summarized, sanitized, or transformed in any way — only a new, independently-written consumption instruction and a hash re-check were added. The policy is sent identically for Memory OFF and Memory ON runs (see `docs/COMPATIBILITY_HARNESS.md`). M3D.1: fixed a Windows-only `UnicodeEncodeError` in the compatibility CLI's console output (`scripts/run_compatibility.py`), plus an associated mojibake risk, by reconfiguring stdout/stderr to UTF-8 (`sae_demo/console_io.py`) before printing. M3D: opaque private-memory artifact loader (`sae_demo/memory_loader.py`) and matching compatibility-runner memory-injection support added. The loader and runner have no knowledge of any private SAE schema — they validate/pass through a generic, versioned envelope (`format_version`, `representation`, `content_sha256`, `payload`) and treat `payload` as opaque text. No private artifact is ever tracked by Git; artifacts live only under the local, gitignored `.local/memory/` root. M3C.1: local-private runtime data boundary hardened — a single gitignored `.local/` root (`runs/`, `memory/`, `generated/`, `tmp/`), a generic runtime-path helper (`sae_demo/runtime_paths.py`), and a deterministic disclosure/safety checker (`sae_demo/disclosure_guard.py`, `scripts/check_disclosure_boundary.py`). M3C: synthetic compatibility runner implemented (`sae_demo/compatibility_runner.py`), supporting Memory OFF and, as of M3D, an opaque Memory ON path. M3B: backend scenario engine implemented. M3A: Nebius/NVIDIA provider transport layer implemented. No UI or Scenario Wizard exists yet.
 
 ## What this project is
 
@@ -12,7 +12,7 @@ A small, independently built demo that lets a user compare an NVIDIA model's res
 
 ## What this project is not
 
-This is not the SAE research codebase, and it does not create, extract, or freeze Emotional Memory. It consumes one already-existing, bounded Emotional Memory export as an opaque external input. See `docs/DISCLOSURE_BOUNDARY.md` for what may and may not enter this repository, and `docs/PRODUCT_SPEC.md` / `docs/ARCHITECTURE.md` for the product and architecture this project targets.
+This is not the SAE research codebase, and it does not create, extract, or freeze Emotional Memory. It consumes one already-existing Emotional Memory export as an opaque external input. See `docs/DISCLOSURE_BOUNDARY.md` for what may and may not enter this repository, and `docs/PRODUCT_SPEC.md` / `docs/ARCHITECTURE.md` for the product and architecture this project targets.
 
 ## Relationship to the private SAE repository
 
@@ -23,7 +23,7 @@ SAE-DEMO is a clean-room project, independently implemented. It is not a fork, c
 - `docs/PRODUCT_SPEC.md` — product purpose, user flow, MVP scope, explicit non-goals
 - `docs/ARCHITECTURE.md` — component-level architecture for the independent demo, including the M3B scenario engine and the future Scenario Wizard boundary
 - `docs/DISCLOSURE_BOUNDARY.md` — short operational rules for what may/may not enter this repository
-- `docs/COMPATIBILITY_HARNESS.md` — what the compatibility runner is (and is not)
+- `docs/COMPATIBILITY_HARNESS.md` — what the compatibility runner is (and is not), including the M4A Emotional Memory vs. behavioral-use-policy distinction
 - `docs/RUNTIME_DATA_BOUNDARY.md` — the `.local/` runtime data boundary: what's tracked vs. local-only, and how it's checked
 
 ## Nebius/NVIDIA provider setup (M3A)
@@ -91,6 +91,14 @@ A live compatibility run on Windows hit `UnicodeEncodeError` while printing an a
 `sae_demo/console_io.py` (`configure_utf8_stdio`) reconfigures stdout and stderr to UTF-8 in place, using the standard library's own `TextIOWrapper.reconfigure()`. `scripts/run_compatibility.py` calls it once, first thing in `main()`, before any output. This changes only how already-decoded text is *encoded on the way out* — it does not filter, escape, or ASCII-normalize model output, and it does not touch conversation history, memory injection, scenario content, or provider parameters. See `tests/test_console_io.py` for coverage including U+2011, a curly apostrophe, an em dash, and representative multi-script non-ASCII text, each verified to round-trip byte-for-byte through the reconfigured stream.
 
 This fix makes the encoding step itself lossless and deterministic; it cannot guarantee how a legacy Windows console (e.g. `cmd.exe` without `chcp 65001`) chooses to *display* UTF-8 bytes on screen, which is a terminal/font concern outside this process's control. It does guarantee correct UTF-8 bytes for redirected/captured output (e.g. `... > run.txt`) and for terminals that read UTF-8 correctly (including modern Windows Terminal).
+
+## Behavioral-use policy and payload integrity (M4A)
+
+**Emotional Memory and the behavioral-use policy are two separate things.** Emotional Memory is the existing, prepared, opaque working representation loaded from `.local/memory/` — M4A does not rewrite, summarize, sanitize, remove weights from, rename vocabulary in, or otherwise transform it in any way. It is not described here as merely a prompt; this project simply has no need to know, and does not inspect, what it structurally is.
+
+The behavioral-use policy is a separate, short, generic, independently-written instruction (`sae_demo/compatibility_runner.DEFAULT_BEHAVIORAL_USE_POLICY`) telling the demo's consumer how to use *any* supplied background context in a response — it says nothing about what that context is or contains, mentions no private vocabulary, and adds no content of its own. It defaults to off at the `CompatibilityRunner` level (so no prior test or behavior changes unless a caller opts in), but `scripts/run_compatibility.py` sends it unconditionally and identically whether `--memory` is `off`, `profile`, or `network` — it is never a condition-specific difference, which keeps a future Memory OFF vs. Memory ON comparison from being confounded by this instruction only appearing on one side.
+
+`scripts/run_compatibility.py` also passes the memory artifact's already loader-verified `content_sha256` through to `CompatibilityRunner`, which independently re-hashes the exact payload string immediately before it is placed into the conversation and refuses to send it (making no provider call) if the hash no longer matches — a defense-in-depth check, not a parse of the payload. See `docs/COMPATIBILITY_HARNESS.md` for the full architecture, and `tests/test_compatibility_runner.py` for the offline coverage (synthetic fake payloads only, including ones shaped with numbers/labels and unusual Unicode, to prove byte-for-byte pass-through).
 
 ## Runtime and local-private data boundary (M3C.1)
 

@@ -44,6 +44,16 @@ and can also produce garbled ("mojibake") output. Before printing
 anything, this script reconfigures stdout/stderr to UTF-8 (see
 sae_demo/console_io.py) -- it does not filter, escape, or
 ASCII-normalize model output.
+
+Behavioral-use policy and payload integrity (M4A): every run -- Memory
+OFF or Memory ON alike -- sends the same one generic, independently-
+written behavioral-use policy instruction (see
+sae_demo/compatibility_runner.DEFAULT_BEHAVIORAL_USE_POLICY), so it is
+never a condition-specific difference between an OFF and an ON run.
+When a memory artifact is loaded, this script also passes its already-
+verified content_sha256 through to the runner, which independently
+re-checks that the exact payload string it is about to send still
+matches that hash immediately before doing so.
 """
 
 import argparse
@@ -56,7 +66,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from dotenv import load_dotenv
 
-from sae_demo.compatibility_runner import CompatibilityRunner, DEFAULT_MAX_TOKENS
+from sae_demo.compatibility_runner import (
+    CompatibilityRunner,
+    DEFAULT_BEHAVIORAL_USE_POLICY,
+    DEFAULT_MAX_TOKENS,
+)
 from sae_demo.config import load_nebius_config
 from sae_demo.console_io import configure_utf8_stdio
 from sae_demo.memory_loader import (
@@ -135,6 +149,7 @@ def main() -> None:
         if args.memory_file is not None:
             parser.error("--memory-file must not be given when --memory is 'off'.")
         memory_payload = None
+        memory_payload_sha256 = None
     else:
         if args.memory_file is None:
             parser.error(
@@ -152,6 +167,10 @@ def main() -> None:
                 f"{artifact.representation!r}."
             )
         memory_payload = artifact.payload
+        # Pass the loader's own already-verified hash through, so the
+        # runner can independently re-confirm, right before sending,
+        # that this exact string is still what was loaded.
+        memory_payload_sha256 = artifact.content_sha256
 
     load_dotenv()
     config = load_nebius_config()
@@ -161,6 +180,12 @@ def main() -> None:
         model_label=config.model,
         max_tokens=args.max_tokens,
         memory_payload=memory_payload,
+        memory_payload_sha256=memory_payload_sha256,
+        # Sent unconditionally, identically, for both --memory off and
+        # --memory profile/network: this is the one generic behavioral-
+        # use policy, and it must never differ between conditions (see
+        # docs/COMPATIBILITY_HARNESS.md).
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
     )
 
     build_fixture = FIXTURES[args.fixture]

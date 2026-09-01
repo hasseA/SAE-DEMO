@@ -13,12 +13,22 @@ prove the runner's own injection behavior: that Memory OFF changes
 nothing from prior behavior, and that a supplied payload string is
 passed through the conversation history unmodified, as its own
 isolated message.
+
+Behavioral-use-policy and payload-integrity tests (M4A) likewise use
+only synthetic fake payload strings -- including ones deliberately
+shaped like private material (numbers, labels, unusual Unicode) to
+prove pass-through fidelity -- never any real Emotional Memory
+content.
 """
+
+import hashlib
 
 import pytest
 
 from sae_demo.compatibility_runner import (
     CompatibilityRunner,
+    DEFAULT_BEHAVIORAL_USE_POLICY,
+    MemoryPayloadIntegrityError,
     NotAFrozenScenarioError,
 )
 from sae_demo.config import NebiusConfig
@@ -462,3 +472,337 @@ def test_result_reports_memory_used_flag_accurately():
     assert result_on.memory_used is True
     assert result_off.to_dict()["memory_used"] is False
     assert result_on.to_dict()["memory_used"] is True
+
+
+# --- behavioral-use policy and payload integrity (M4A) ----------------------
+#
+# All payload strings below (including ones shaped like private material --
+# numbers, labels, unusual Unicode) are synthetic filler written for these
+# tests only. None of them are, or resemble, any real Emotional Memory
+# content, and no real artifact file is read anywhere in this file.
+
+_FAKE_NUMERIC_LABELED_PAYLOAD = (
+    "kind: fabricated_test_emotion_x, weight: 0.87, secondary_weight: 12, "
+    "note: synthetic filler shaped like a labeled/numeric record for test "
+    "purposes only."
+)
+
+_FAKE_UNICODE_PAYLOAD = (
+    "synthetic filler with unusual Unicode: café, naïve, "
+    "日本語, non‑breaking‑hyphen‑shape, "
+    "curly ’quote’ and em—dash."
+)
+
+
+def test_behavioral_use_policy_is_off_by_default():
+    """A caller that doesn't ask for the M4A policy sees no new message
+    -- this is what keeps every pre-M4A test above passing unmodified.
+    """
+
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(provider, system_message=None)
+
+    runner.run(_small_scenario())
+
+    first_call_messages = fake_client.completions.calls[0]["messages"]
+    assert [m["role"] for m in first_call_messages] == ["user"]
+    for call in fake_client.completions.calls:
+        for message in call["messages"]:
+            assert message["content"] != DEFAULT_BEHAVIORAL_USE_POLICY
+
+
+def test_memory_off_receives_same_generic_policy_but_no_payload():
+    """Requirement 1: Memory OFF gets the policy message, and nothing
+    memory-related.
+    """
+
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(
+        provider,
+        system_message=None,
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
+    )
+
+    result = runner.run(_small_scenario())
+
+    assert result.memory_used is False
+    first_call_messages = fake_client.completions.calls[0]["messages"]
+    assert [m["role"] for m in first_call_messages] == ["system", "user"]
+    assert first_call_messages[0]["content"] == DEFAULT_BEHAVIORAL_USE_POLICY
+    assert first_call_messages[1]["content"] == "Segment A text."
+
+
+def test_memory_on_receives_same_generic_policy_plus_opaque_payload():
+    """Requirement 2: Memory ON gets the *same* policy text plus the
+    opaque payload, each as its own message.
+    """
+
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(
+        provider,
+        system_message=None,
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
+        memory_payload=_FAKE_PROFILE_LIKE_PAYLOAD,
+    )
+
+    result = runner.run(_small_scenario())
+
+    assert result.memory_used is True
+    first_call_messages = fake_client.completions.calls[0]["messages"]
+    assert [m["role"] for m in first_call_messages] == [
+        "system",  # behavioral-use policy
+        "system",  # memory context label
+        "system",  # opaque payload
+        "user",
+    ]
+    assert first_call_messages[0]["content"] == DEFAULT_BEHAVIORAL_USE_POLICY
+    assert first_call_messages[2]["content"] == _FAKE_PROFILE_LIKE_PAYLOAD
+
+
+def test_behavioral_use_policy_text_is_byte_identical_between_off_and_on():
+    """Requirement 6 (symmetry half): the policy text itself must not
+    differ in any way between an OFF run and an ON run.
+    """
+
+    responses_off = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider_off, client_off = _provider_with(responses_off)
+    runner_off = CompatibilityRunner(
+        provider_off,
+        system_message=None,
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
+    )
+    runner_off.run(_small_scenario())
+
+    responses_on = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider_on, client_on = _provider_with(responses_on)
+    runner_on = CompatibilityRunner(
+        provider_on,
+        system_message=None,
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
+        memory_payload=_FAKE_NETWORK_LIKE_PAYLOAD,
+    )
+    runner_on.run(_small_scenario())
+
+    policy_off = client_off.completions.calls[0]["messages"][0]["content"]
+    policy_on = client_on.completions.calls[0]["messages"][0]["content"]
+    assert policy_off == policy_on == DEFAULT_BEHAVIORAL_USE_POLICY
+
+
+def test_scenario_messages_are_byte_identical_between_off_and_on():
+    """Requirement 6: the scenario's own user-role messages must be
+    exactly the same text, in the same order, whether or not memory
+    (and the policy) are attached.
+    """
+
+    responses_off = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider_off, client_off = _provider_with(responses_off)
+    runner_off = CompatibilityRunner(
+        provider_off,
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
+    )
+    runner_off.run(_small_scenario())
+
+    responses_on = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider_on, client_on = _provider_with(responses_on)
+    runner_on = CompatibilityRunner(
+        provider_on,
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
+        memory_payload=_FAKE_NUMERIC_LABELED_PAYLOAD,
+        memory_payload_sha256=hashlib.sha256(
+            _FAKE_NUMERIC_LABELED_PAYLOAD.encode("utf-8")
+        ).hexdigest(),
+    )
+    runner_on.run(_small_scenario())
+
+    def user_messages(client):
+        out = []
+        for call in client.completions.calls:
+            out.extend(
+                m["content"] for m in call["messages"] if m["role"] == "user"
+            )
+        return out
+
+    # Only the *new* user content per call matters for this comparison;
+    # take the last call, which carries every user segment sent so far.
+    last_call_off = client_off.completions.calls[-1]["messages"]
+    last_call_on = client_on.completions.calls[-1]["messages"]
+    off_user_texts = [m["content"] for m in last_call_off if m["role"] == "user"]
+    on_user_texts = [m["content"] for m in last_call_on if m["role"] == "user"]
+    assert off_user_texts == on_user_texts == [
+        "Segment A text.",
+        "Segment B text.",
+        "Segment C text.",
+    ]
+
+
+def test_provider_call_settings_unchanged_between_off_and_on():
+    """Requirement 7: max_tokens (and, by extension, provider/model
+    configuration -- fixed at the NebiusProvider layer, untouched here)
+    must not vary with memory/policy presence.
+    """
+
+    responses_off = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider_off, client_off = _provider_with(responses_off)
+    runner_off = CompatibilityRunner(
+        provider_off,
+        max_tokens=77,
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
+    )
+    runner_off.run(_small_scenario())
+
+    responses_on = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider_on, client_on = _provider_with(responses_on)
+    runner_on = CompatibilityRunner(
+        provider_on,
+        max_tokens=77,
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
+        memory_payload=_FAKE_PROFILE_LIKE_PAYLOAD,
+    )
+    runner_on.run(_small_scenario())
+
+    off_max_tokens = {call["max_tokens"] for call in client_off.completions.calls}
+    on_max_tokens = {call["max_tokens"] for call in client_on.completions.calls}
+    assert off_max_tokens == on_max_tokens == {77}
+
+
+@pytest.mark.parametrize(
+    "label,payload",
+    [
+        ("profile_like", _FAKE_PROFILE_LIKE_PAYLOAD),
+        ("network_like", _FAKE_NETWORK_LIKE_PAYLOAD),
+        ("numeric_labeled", _FAKE_NUMERIC_LABELED_PAYLOAD),
+        ("unusual_unicode", _FAKE_UNICODE_PAYLOAD),
+    ],
+)
+def test_payload_passed_onward_exactly_matches_loader_style_output(label, payload):
+    """Requirements 3 + 4 + 5: whatever string is handed in as
+    memory_payload -- including one with numbers/labels, and one with
+    unusual Unicode -- comes out byte-for-byte identical in the
+    message sent to the provider. This also demonstrates the consumer
+    never parses or rewrites it: a JSON-shaped or numeric-shaped
+    payload is never re-serialized, reformatted, or altered in any way.
+    """
+
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(
+        provider,
+        system_message=None,
+        behavioral_use_policy=None,
+        memory_context_label=None,
+        memory_payload=payload,
+        memory_payload_sha256=hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+    )
+
+    runner.run(_small_scenario())
+
+    first_call_messages = fake_client.completions.calls[0]["messages"]
+    assert first_call_messages[0]["role"] == "system"
+    assert first_call_messages[0]["content"] == payload
+    # Character-for-character, not just logically equal.
+    assert len(first_call_messages[0]["content"]) == len(payload)
+    for expected_char, actual_char in zip(payload, first_call_messages[0]["content"]):
+        assert expected_char == actual_char
+
+
+def test_payload_integrity_check_passes_with_matching_hash():
+    payload = _FAKE_NUMERIC_LABELED_PAYLOAD
+    correct_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(
+        provider,
+        memory_payload=payload,
+        memory_payload_sha256=correct_hash,
+    )
+
+    result = runner.run(_small_scenario())
+
+    assert result.completed is True
+    assert result.memory_used is True
+
+
+def test_payload_integrity_check_fails_closed_on_hash_mismatch_no_provider_call():
+    """If the exact string about to be sent doesn't match the hash the
+    caller says it should have, refuse to send it at all -- and never
+    make a provider call in that turn.
+    """
+
+    payload = _FAKE_NUMERIC_LABELED_PAYLOAD
+    wrong_hash = hashlib.sha256(b"a completely different fake string").hexdigest()
+    responses = [_FakeResponse(_FakeMessage("should never be reached"))]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(
+        provider,
+        memory_payload=payload,
+        memory_payload_sha256=wrong_hash,
+    )
+
+    with pytest.raises(MemoryPayloadIntegrityError):
+        runner.run(_small_scenario())
+
+    assert len(fake_client.completions.calls) == 0
+
+
+def test_payload_integrity_check_is_optional_and_skipped_when_no_hash_given():
+    """Backward-compatible with M3D usage that never passed a hash: no
+    hash supplied means no integrity check is performed, and the run
+    proceeds exactly as it did before M4A.
+    """
+
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(
+        provider,
+        memory_payload=_FAKE_PROFILE_LIKE_PAYLOAD,
+        memory_payload_sha256=None,
+    )
+
+    result = runner.run(_small_scenario())
+
+    assert result.completed is True
+    assert result.memory_used is True
+
+
+def test_behavioral_use_policy_default_text_has_no_private_vocabulary():
+    """The shipped default policy text itself must never mention
+    Emotional Memory, SAE, XNET/XINJ, or any structural/schema term --
+    it is a generic instruction about *any* supplied context.
+    """
+
+    forbidden_terms = [
+        "Emotional Memory",
+        "SAE",
+        "XNET",
+        "XINJ",
+        "anchor",
+        "kernel",
+        "weight",
+        "emotion_node",
+    ]
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    for term in forbidden_terms:
+        assert term.lower() not in lowered
+
+
+def test_existing_tests_semantics_full_suite_still_reflects_pre_m4a_shapes():
+    """A light end-to-end sanity check that the pre-M4A default
+    (policy off, memory off) still reproduces the exact pre-M4A
+    message shape used throughout the tests above this section.
+    """
+
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(provider)  # no new M4A args at all
+
+    runner.run(_small_scenario())
+
+    first_call_messages = fake_client.completions.calls[0]["messages"]
+    assert [m["role"] for m in first_call_messages] == ["system", "user"]
+    assert first_call_messages[0]["content"] == (
+        "You are participating in a short scripted conversation. Respond "
+        "naturally and concisely to each message as it arrives."
+    )
