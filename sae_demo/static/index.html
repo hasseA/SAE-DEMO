@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SAE-DEMO</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="header">
+    <h1>SAE-DEMO</h1>
+    <p class="tagline">
+      A small demo comparing how an NVIDIA model responds to a synthetic
+      scenario with, and without, an existing, prepared Emotional Memory
+      supplied as context.
+    </p>
+  </header>
+
+  <main>
+    <section id="connection-status" class="status-card">
+      <h2>Backend status</h2>
+      <p id="backend-status-text" class="status-text">Checking&hellip;</p>
+      <p id="model-status-text" class="status-detail"></p>
+    </section>
+
+    <section class="placeholder-grid" aria-label="Upcoming demo areas">
+      <div class="placeholder-card">
+        <h3>Scenario</h3>
+        <p class="coming-soon">Coming in a later M5 stage.</p>
+      </div>
+      <div class="placeholder-card">
+        <h3>Memory OFF / ON</h3>
+        <p class="coming-soon">Coming in a later M5 stage.</p>
+      </div>
+      <div class="placeholder-card">
+        <h3>Conversation</h3>
+        <p class="coming-soon">Coming in a later M5 stage.</p>
+      </div>
+      <div class="placeholder-card">
+        <h3>Comparison</h3>
+        <p class="coming-soon">Coming in a later M5 stage.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      M5A: web shell and status API only. Scenario, memory, and provider
+      execution are not yet wired to this page.
+    </p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

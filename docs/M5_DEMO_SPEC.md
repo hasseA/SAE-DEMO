@@ -1,6 +1,6 @@
 # M5 — Hackathon Demo UI/API Specification
 
-Status: **design only**. Nothing in this document has been implemented. No frontend, backend, or API code exists yet beyond what M3A–M3D/M4A/M4B already built (`sae_demo/scenario.py`, `scenario_engine.py`, `nebius_provider.py`, `config.py`, `compatibility_runner.py`, `memory_loader.py`). This document specifies the smallest compelling demo that can be built around that existing backend without redesigning SAE or expanding scope beyond what a hackathon judge needs to see. It builds directly on the frozen boundary in `docs/decisions/SAE_DEMO_M4_CONSUMPTION_BOUNDARY_FREEZE.md` and does not reopen it.
+Status: **design document; M5A implemented.** M5A (Section 20) — the minimal FastAPI shell, `/api/health`, `/api/status`, and the static vanilla frontend (`sae_demo/web_app.py`, `sae_demo/static/`) — is implemented. M5B onward (scenario run UI, Memory OFF/ON integration, comparison view, visualization, evidence card, polish) remain unimplemented design only. No frontend, backend, or API code beyond M5A and what M3A–M3D/M4A/M4B already built (`sae_demo/scenario.py`, `scenario_engine.py`, `nebius_provider.py`, `config.py`, `compatibility_runner.py`, `memory_loader.py`) exists yet. This document specifies the smallest compelling demo that can be built around that existing backend without redesigning SAE or expanding scope beyond what a hackathon judge needs to see. It builds directly on the frozen boundary in `docs/decisions/SAE_DEMO_M4_CONSUMPTION_BOUNDARY_FREEZE.md` and does not reopen it.
 
 ## 1. M5 objective
 
