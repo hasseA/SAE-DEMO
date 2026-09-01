@@ -1,16 +1,20 @@
-"""Minimal FastAPI web shell for SAE-DEMO (M5A, extended M5B, M5C).
+"""Minimal FastAPI web shell for SAE-DEMO (M5A, extended M5B/M5C/M5D).
 
 This module serves the static frontend and exposes a small, typed
 API. M5A added a health/status API only. M5B wired the existing,
 unchanged ``ScenarioEngine`` into a Memory-OFF, provider-free
-scenario-run flow. M5C connects that same flow to the existing,
+scenario-run flow. M5C connected that same flow to the existing,
 unchanged ``NebiusProvider``, opaque memory loader, and M4B
-behavioral-use policy, so each "advance" now sends the next segment
+behavioral-use policy, so each "advance" sends the next segment
 through a real provider call and returns a real assistant response,
-under either Memory OFF or Memory ON.
+under either Memory OFF or Memory ON. M5D adds a *controlled*
+comparison: once a run completes, its opposite-memory-mode condition
+can be replayed as a completely fresh run of the *same* scenario, and
+once both runs are complete, their transcripts can be viewed side by
+side, aligned by segment.
 
-M5C deliberately does not implement a second copy of memory-placement
-or behavioral-policy semantics: it drives
+M5C/M5D deliberately do not implement a second copy of memory-
+placement or behavioral-policy semantics: every run drives
 ``compatibility_runner.CompatibilityRunner.build_history()`` /
 ``.send_turn()`` (the exact same implementation ``CompatibilityRunner
 .run()`` itself uses internally, factored out for step-by-step use --
@@ -23,15 +27,29 @@ exactly as loaded.
 Memory ON uses exactly one operator-configured artifact, resolved from
 the ``SAE_DEMO_MEMORY_FILE`` environment variable -- never a hardcoded
 path or filename in source, and never a profile/network choice exposed
-to the UI. Run state (including conversation history and any loaded
-memory payload) lives only in a process-local, in-memory registry;
-nothing is written to disk, and a server restart clears every run.
+to the UI. Run and comparison state (including conversation history
+and any loaded memory payload) lives only in process-local, in-memory
+registries; nothing is written to disk, and a server restart clears
+every run and comparison.
+
+A comparison pair (M5D) is built entirely from the existing single-run
+machinery: creating an "alternate" run reuses the exact same scenario
+id and the exact same run-construction path (``_start_run_entry``) as
+starting any other run, with only the memory mode flipped and a
+completely fresh history -- it never reuses or reads the first run's
+conversation history. A comparison is never assembled from two
+unrelated runs: pairing is recorded only when M5D itself creates the
+second run from a specific, already-completed first run.
 
 No response from this module ever includes: the API key, ``.env``
 contents, the memory payload, its hash, its file path or
 representation label, the system message, the behavioral-use policy
 text, or any other private/internal detail -- see ``StatusResponse``,
-``RunState``, and the safe, generic error messages used throughout.
+``RunState``, ``ComparisonState``, and the safe, generic error
+messages used throughout. This module performs no automated scoring,
+sentiment analysis, or "which response is better" judgment of any
+kind -- a comparison is only the two aligned transcripts, for a human
+to read.
 """
 
 from __future__ import annotations
@@ -41,7 +59,7 @@ import threading
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Literal, Optional
+from typing import Callable, Dict, List, Literal, Optional, Tuple
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -72,9 +90,9 @@ from tests.fixtures.synthetic_scenarios import (
 )
 
 APP_NAME = "SAE-DEMO"
-STAGE_LABEL = "M5C"
+STAGE_LABEL = "M5D"
 MEMORY_FEATURE_STATUS = "active in M5C (one configured artifact, Memory ON/OFF)"
-SCENARIO_FEATURE_STATUS = "active in M5C (real provider responses)"
+SCENARIO_FEATURE_STATUS = "active in M5D (real provider responses, controlled comparison)"
 
 # Never a hardcoded path or filename -- an operator points this at a
 # local, gitignored artifact under .local/memory/ themselves, exactly
@@ -88,6 +106,8 @@ MEMORY_LOAD_FAILED_MESSAGE = "Memory artifact could not be loaded."
 MEMORY_INTEGRITY_FAILED_MESSAGE = "Memory artifact failed integrity verification."
 PROVIDER_NOT_CONFIGURED_MESSAGE = "Provider is not configured for this demo."
 PROVIDER_REQUEST_FAILED_MESSAGE = "The model provider request failed. Please try again."
+RUN_NOT_COMPLETE_MESSAGE = "The run must complete before starting a comparison."
+RUN_ALREADY_PAIRED_MESSAGE = "This run is already part of a comparison."
 
 MEMORY_OFF = "off"
 MEMORY_ON = "on"
@@ -197,7 +217,11 @@ class RunState(BaseModel):
     not-yet-sent segment (``None`` once the run is complete or has
     failed). ``transcript`` holds only segments already sent, each
     paired with its assistant response (or a safe error if that
-    segment's provider call failed).
+    segment's provider call failed). ``comparison_id`` is set once
+    this run has been paired with an opposite-memory-mode alternate
+    (either because this run *is* that alternate, or because
+    ``POST /api/runs/{run_id}/alternate`` was called on it) -- ``None``
+    for a run that has not been paired.
     """
 
     run_id: str
@@ -212,6 +236,7 @@ class RunState(BaseModel):
     error: Optional[str] = None
     current_segment: Optional[SegmentView] = None
     transcript: List[ConversationTurn] = []
+    comparison_id: Optional[str] = None
 
 
 class StartRunRequest(BaseModel):
@@ -221,6 +246,52 @@ class StartRunRequest(BaseModel):
     # Any other value is rejected (422) by this Literal type -- this is
     # the "validate strictly" requirement for M5C.
     memory_mode: Literal["off", "on"] = "off"
+
+
+class ComparisonSegmentView(BaseModel):
+    """One scenario segment, aligned across the OFF and ON conditions.
+
+    ``text`` is the exact scenario text sent in *both* conditions (the
+    controlled-pair invariant); only the two assistant responses
+    differ. No internal/system/background message is ever included.
+    """
+
+    segment_id: str
+    role: str
+    role_label: str
+    text: str
+    off_assistant_text: Optional[str] = None
+    on_assistant_text: Optional[str] = None
+
+
+class ComparisonState(BaseModel):
+    """Public-safe state of one controlled Memory OFF/ON comparison.
+
+    ``status`` is ``"pending"`` while either run is still in progress,
+    ``"ready"`` once both have completed successfully (only then is
+    ``segments`` populated), or ``"failed"`` if either run failed --
+    never a completed-looking comparison built from an incomplete or
+    failed run. Carries no memory payload, hash, artifact path,
+    system message, behavioral-use policy text, API key, or any other
+    private detail -- only neutral scenario/run metadata and the two
+    aligned, already-public transcripts.
+    """
+
+    comparison_id: str
+    scenario_id: str
+    scenario_title: str
+    target_model: str
+    total_segments: int
+    off_run_id: str
+    on_run_id: str
+    off_completed: bool
+    on_completed: bool
+    off_failed: bool
+    on_failed: bool
+    off_error: Optional[str] = None
+    on_error: Optional[str] = None
+    status: Literal["pending", "ready", "failed"]
+    segments: List[ComparisonSegmentView] = []
 
 
 @dataclass
@@ -233,16 +304,37 @@ class _RunEntry:
     turns: List[TurnMetadata] = field(default_factory=list)
     failed: bool = False
     error: Optional[str] = None
+    # Set once this run has been paired into a comparison (either as
+    # the original run an alternate was created from, or as that
+    # alternate itself). A run can be paired at most once.
+    comparison_id: Optional[str] = None
+
+
+@dataclass
+class _ComparisonEntry:
+    """A controlled pair: one Memory OFF run and one Memory ON run of
+    the exact same scenario. Deliberately minimal -- no status field
+    of its own; status is always derived from the current state of the
+    two referenced runs (see ``_comparison_state``), so it can never
+    drift out of sync with them.
+    """
+
+    comparison_id: str
+    scenario_id: str
+    off_run_id: str
+    on_run_id: str
 
 
 # Process-local, in-memory only. No database, no disk persistence, no
 # writes under .local/ -- a completed or in-progress run's transcript
 # is never written to any tracked or runtime-data directory. Cleared
 # on every server restart. The lock serializes registry reads/writes
-# and per-run mutation (advancing a run) against concurrent requests
-# within this one process -- it does not attempt to solve multi-user
-# or distributed concurrency, which remains explicitly out of scope.
+# and per-run mutation (advancing a run, pairing a comparison) against
+# concurrent requests within this one process -- it does not attempt
+# to solve multi-user or distributed concurrency, which remains
+# explicitly out of scope.
 _RUN_REGISTRY: Dict[str, _RunEntry] = {}
+_COMPARISON_REGISTRY: Dict[str, _ComparisonEntry] = {}
 _REGISTRY_LOCK = threading.Lock()
 
 
@@ -312,6 +404,7 @@ def _run_state(run_id: str, entry: _RunEntry) -> RunState:
         error=entry.error,
         current_segment=current_segment,
         transcript=transcript,
+        comparison_id=entry.comparison_id,
     )
 
 
@@ -351,6 +444,130 @@ def _build_provider():
         raise HTTPException(status_code=503, detail=PROVIDER_NOT_CONFIGURED_MESSAGE) from None
 
     return NebiusProvider(config), config.model
+
+
+def _start_run_entry(scenario_id: str, memory_mode: str) -> Tuple[str, _RunEntry]:
+    """Build one fresh, unregistered run for ``scenario_id``/``memory_mode``.
+
+    This is the *only* place a run is constructed -- both
+    ``POST /api/runs`` (a user-chosen scenario/mode) and
+    ``POST /api/runs/{run_id}/alternate`` (M5D's opposite-condition
+    replay) call this same function, so there is exactly one code path
+    that resolves the provider, resolves memory, and builds the
+    initial conversation history. An alternate run therefore always
+    gets a completely independent `ScenarioEngine`, `CompatibilityRunner`,
+    and `history` -- it never reads or reuses another run's state.
+
+    Raises `HTTPException` exactly as `POST /api/runs` already did:
+    404 for an unknown scenario, 503 for a missing/broken provider or
+    (Memory ON only) memory configuration.
+    """
+
+    build_fixture = BUILTIN_SCENARIOS.get(scenario_id)
+    if build_fixture is None:
+        raise HTTPException(status_code=404, detail="Unknown scenario.")
+
+    # Checked for both Memory OFF and Memory ON -- advancing either
+    # condition requires a configured provider, so this is verified
+    # up front rather than failing partway through a run.
+    provider, model_label = _build_provider()
+
+    memory_payload = None
+    memory_payload_sha256 = None
+    if memory_mode == MEMORY_ON:
+        artifact = _resolve_memory_payload()
+        memory_payload = artifact.payload
+        memory_payload_sha256 = artifact.content_sha256
+
+    scenario = build_fixture(mode=MODE_FROZEN)
+    engine = ScenarioEngine(scenario)
+
+    runner = CompatibilityRunner(
+        provider,
+        model_label=model_label,
+        max_tokens=DEFAULT_MAX_TOKENS,
+        memory_payload=memory_payload,
+        memory_payload_sha256=memory_payload_sha256,
+        # Sent unconditionally, identically, for Memory OFF and Memory
+        # ON alike -- never a condition-specific difference. This is
+        # the same invariant scripts/run_compatibility.py already
+        # relies on, and the one a controlled M5D comparison depends
+        # on; see docs/decisions/SAE_DEMO_M4_CONSUMPTION_BOUNDARY_FREEZE.md.
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
+    )
+
+    try:
+        history, _memory_used = runner.build_history()
+    except MemoryPayloadIntegrityError:
+        raise HTTPException(status_code=503, detail=MEMORY_INTEGRITY_FAILED_MESSAGE) from None
+
+    run_id = uuid.uuid4().hex
+    entry = _RunEntry(
+        engine=engine,
+        scenario_key=scenario_id,
+        memory_mode=memory_mode,
+        runner=runner,
+        history=history,
+    )
+    return run_id, entry
+
+
+def _comparison_state(comparison: _ComparisonEntry) -> ComparisonState:
+    off_entry = _RUN_REGISTRY[comparison.off_run_id]
+    on_entry = _RUN_REGISTRY[comparison.on_run_id]
+
+    off_completed = off_entry.engine.is_complete and not off_entry.failed
+    on_completed = on_entry.engine.is_complete and not on_entry.failed
+
+    status: Literal["pending", "ready", "failed"]
+    if off_entry.failed or on_entry.failed:
+        status = "failed"
+    elif off_completed and on_completed:
+        status = "ready"
+    else:
+        status = "pending"
+
+    segments: List[ComparisonSegmentView] = []
+    if status == "ready":
+        # Both runs replay the exact same scenario id through the same
+        # _start_run_entry path, so their segment order/text are
+        # identical by construction -- the OFF run's own trace is used
+        # as the shared, canonical segment list for both columns.
+        off_trace = off_entry.engine.run_trace()
+        off_turns_by_segment = {turn.segment_id: turn for turn in off_entry.turns}
+        on_turns_by_segment = {turn.segment_id: turn for turn in on_entry.turns}
+
+        for record in off_trace.sent_segments:
+            off_turn = off_turns_by_segment.get(record.segment_id)
+            on_turn = on_turns_by_segment.get(record.segment_id)
+            segments.append(
+                ComparisonSegmentView(
+                    segment_id=record.segment_id,
+                    role=record.role,
+                    role_label=_role_label(record.role),
+                    text=record.text_sent,
+                    off_assistant_text=off_turn.assistant_text if off_turn else None,
+                    on_assistant_text=on_turn.assistant_text if on_turn else None,
+                )
+            )
+
+    return ComparisonState(
+        comparison_id=comparison.comparison_id,
+        scenario_id=comparison.scenario_id,
+        scenario_title=off_entry.engine.run_trace().scenario_title,
+        target_model=DEFAULT_NEBIUS_MODEL,
+        total_segments=len(off_entry.engine.run_trace().segment_order),
+        off_run_id=comparison.off_run_id,
+        on_run_id=comparison.on_run_id,
+        off_completed=off_completed,
+        on_completed=on_completed,
+        off_failed=off_entry.failed,
+        on_failed=on_entry.failed,
+        off_error=off_entry.error,
+        on_error=on_entry.error,
+        status=status,
+        segments=segments,
+    )
 
 
 app = FastAPI(title=APP_NAME)
@@ -396,52 +613,7 @@ def list_scenarios() -> List[ScenarioSummary]:
 
 @app.post("/api/runs", response_model=RunState, status_code=201)
 def start_run(payload: StartRunRequest) -> RunState:
-    build_fixture = BUILTIN_SCENARIOS.get(payload.scenario_id)
-    if build_fixture is None:
-        raise HTTPException(status_code=404, detail="Unknown scenario.")
-
-    # Checked for both Memory OFF and Memory ON -- advancing either
-    # condition requires a configured provider, so this is verified
-    # up front rather than failing partway through a run.
-    provider, model_label = _build_provider()
-
-    memory_payload = None
-    memory_payload_sha256 = None
-    if payload.memory_mode == MEMORY_ON:
-        artifact = _resolve_memory_payload()
-        memory_payload = artifact.payload
-        memory_payload_sha256 = artifact.content_sha256
-
-    scenario = build_fixture(mode=MODE_FROZEN)
-    engine = ScenarioEngine(scenario)
-
-    runner = CompatibilityRunner(
-        provider,
-        model_label=model_label,
-        max_tokens=DEFAULT_MAX_TOKENS,
-        memory_payload=memory_payload,
-        memory_payload_sha256=memory_payload_sha256,
-        # Sent unconditionally, identically, for Memory OFF and Memory
-        # ON alike -- never a condition-specific difference. This is
-        # the same invariant scripts/run_compatibility.py already
-        # relies on; see
-        # docs/decisions/SAE_DEMO_M4_CONSUMPTION_BOUNDARY_FREEZE.md.
-        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
-    )
-
-    try:
-        history, _memory_used = runner.build_history()
-    except MemoryPayloadIntegrityError:
-        raise HTTPException(status_code=503, detail=MEMORY_INTEGRITY_FAILED_MESSAGE) from None
-
-    run_id = uuid.uuid4().hex
-    entry = _RunEntry(
-        engine=engine,
-        scenario_key=payload.scenario_id,
-        memory_mode=payload.memory_mode,
-        runner=runner,
-        history=history,
-    )
+    run_id, entry = _start_run_entry(payload.scenario_id, payload.memory_mode)
 
     with _REGISTRY_LOCK:
         _RUN_REGISTRY[run_id] = entry
@@ -485,6 +657,60 @@ def advance_run(run_id: str) -> RunState:
             entry.engine.record_model_response(sent_record.segment_id, turn.assistant_text or "")
 
     return _run_state(run_id, entry)
+
+
+@app.post("/api/runs/{run_id}/alternate", response_model=RunState, status_code=201)
+def create_alternate_run(run_id: str) -> RunState:
+    """Start a fresh, opposite-memory-mode run of the same scenario.
+
+    This is M5D's controlled-comparison entry point. The alternate run
+    is built by `_start_run_entry` -- the exact same construction path
+    `POST /api/runs` uses -- so it gets a completely independent
+    engine/runner/history; nothing from the original run's
+    conversation is carried over. The original run must already be
+    completed (not merely in progress, and not failed) and must not
+    already be part of another comparison; a comparison, once formed,
+    always pairs exactly one Memory OFF run with exactly one Memory ON
+    run of the same scenario id.
+    """
+
+    with _REGISTRY_LOCK:
+        original = _RUN_REGISTRY.get(run_id)
+        if original is None:
+            raise HTTPException(status_code=404, detail="Unknown run.")
+        if original.comparison_id is not None:
+            raise HTTPException(status_code=409, detail=RUN_ALREADY_PAIRED_MESSAGE)
+        if original.failed or not original.engine.is_complete:
+            raise HTTPException(status_code=409, detail=RUN_NOT_COMPLETE_MESSAGE)
+
+        alternate_mode = MEMORY_OFF if original.memory_mode == MEMORY_ON else MEMORY_ON
+        new_run_id, new_entry = _start_run_entry(original.scenario_key, alternate_mode)
+
+        comparison_id = uuid.uuid4().hex
+        if original.memory_mode == MEMORY_OFF:
+            off_run_id, on_run_id = run_id, new_run_id
+        else:
+            off_run_id, on_run_id = new_run_id, run_id
+
+        _COMPARISON_REGISTRY[comparison_id] = _ComparisonEntry(
+            comparison_id=comparison_id,
+            scenario_id=original.scenario_key,
+            off_run_id=off_run_id,
+            on_run_id=on_run_id,
+        )
+        original.comparison_id = comparison_id
+        new_entry.comparison_id = comparison_id
+        _RUN_REGISTRY[new_run_id] = new_entry
+
+    return _run_state(new_run_id, new_entry)
+
+
+@app.get("/api/comparisons/{comparison_id}", response_model=ComparisonState)
+def get_comparison(comparison_id: str) -> ComparisonState:
+    comparison = _COMPARISON_REGISTRY.get(comparison_id)
+    if comparison is None:
+        raise HTTPException(status_code=404, detail="Unknown comparison.")
+    return _comparison_state(comparison)
 
 
 @app.get("/")

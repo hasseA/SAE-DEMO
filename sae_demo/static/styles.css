@@ -24,7 +24,7 @@ body {
 }
 
 .header {
-  max-width: 760px;
+  max-width: 900px;
   margin: 0 auto;
   padding: 2.5rem 1.5rem 1rem;
 }
@@ -43,7 +43,7 @@ body {
 }
 
 main {
-  max-width: 760px;
+  max-width: 900px;
   margin: 0 auto;
   padding: 0 1.5rem 2.5rem;
 }
@@ -164,8 +164,19 @@ label {
   margin-top: 0.75rem;
 }
 
+#compare-alternate-btn,
 #start-another-btn {
   margin-top: 0.5rem;
+  margin-right: 0.5rem;
+}
+
+/* "Start a different scenario" is deliberately the less-prominent of
+   the two post-completion actions -- the comparison action above it
+   is the primary path through the demo. */
+#start-another-btn {
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--border);
 }
 
 #memory-mode-fieldset {
@@ -231,6 +242,47 @@ label {
   white-space: pre-line;
 }
 
+#comparison-panel .status-detail {
+  margin-bottom: 0.75rem;
+}
+
+#comparison-segments {
+  margin-top: 0.5rem;
+}
+
+.comparison-segment {
+  border-top: 1px solid var(--border);
+  padding-top: 1rem;
+  margin-top: 1rem;
+}
+
+.comparison-segment:first-child {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.comparison-segment .segment-text {
+  margin-bottom: 0.75rem;
+}
+
+.comparison-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.comparison-column {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+}
+
+.comparison-column .turn-speaker {
+  margin-top: 0;
+}
+
 .placeholder-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
@@ -257,7 +309,7 @@ label {
 }
 
 footer {
-  max-width: 760px;
+  max-width: 900px;
   margin: 0 auto;
   padding: 0 1.5rem 2.5rem;
   color: var(--text-muted);
@@ -265,7 +317,8 @@ footer {
 }
 
 @media (max-width: 560px) {
-  .placeholder-grid {
+  .placeholder-grid,
+  .comparison-columns {
     grid-template-columns: 1fr;
   }
 }

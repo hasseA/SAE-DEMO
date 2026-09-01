@@ -68,7 +68,8 @@
 
         <p id="run-error" class="status-text status-error" hidden></p>
 
-        <button id="start-another-btn" type="button" hidden>Start another scenario</button>
+        <button id="compare-alternate-btn" type="button" hidden></button>
+        <button id="start-another-btn" type="button" hidden>Start a different scenario</button>
 
         <div id="conversation" aria-label="Conversation transcript"></div>
       </div>
@@ -76,11 +77,14 @@
       <p id="scenario-error" class="status-text status-error" hidden></p>
     </section>
 
+    <section id="comparison-panel" class="status-card" hidden aria-label="Comparison">
+      <h2>Comparison</h2>
+      <p id="comparison-summary" class="status-detail"></p>
+      <p id="comparison-status-note" class="status-detail" hidden></p>
+      <div id="comparison-segments"></div>
+    </section>
+
     <section class="placeholder-grid" aria-label="Upcoming demo areas">
-      <div class="placeholder-card">
-        <h3>Comparison</h3>
-        <p class="coming-soon">Coming in a later M5 stage.</p>
-      </div>
       <div class="placeholder-card">
         <h3>Emotional Memory concept</h3>
         <p class="coming-soon">Coming in a later M5 stage.</p>
@@ -90,11 +94,13 @@
 
   <footer>
     <p>
-      M5C: Memory OFF and Memory ON runs use one operator-configured
-      Emotional Memory artifact and send real requests to the configured
-      model. Memory mode is fixed once a run starts &mdash; start a new run to
-      try the other condition. Side-by-side comparison comes in a later M5
-      stage.
+      M5D: after a run completes, the same scenario can be replayed as a
+      completely fresh run under the opposite memory condition, and once
+      both are complete their transcripts are shown side by side, aligned
+      by segment. This is a controlled pair only &mdash; same scenario,
+      same segment order, same model and policy, memory presence the only
+      difference. The comparison view shows the two transcripts as they
+      are; it does not rate, rank, or declare either response preferable.
     </p>
   </footer>
 

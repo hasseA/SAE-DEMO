@@ -7,7 +7,13 @@ in-memory scenario-run lifecycle. M5C tests exercise Memory OFF/ON
 run configuration, the real (but always mocked-in-tests) provider
 call made on each "advance", the controlled-run invariants that must
 hold between Memory OFF and Memory ON, and the safe-error behavior
-required when configuration or a provider call fails.
+required when configuration or a provider call fails. M5D tests
+exercise the controlled comparison: creating a fresh opposite-memory-
+mode "alternate" run of the same scenario from an already-completed
+run, the pair-validation rules that keep a comparison from ever being
+presented as complete unless it truly pairs one completed OFF run and
+one completed ON run of the same scenario, and that the comparison
+response never performs or implies any automated scoring/ranking.
 
 Every provider call in this module goes through an in-process fake
 (`mock_provider` / `reasoning_mock_provider` / `failing_mock_provider`
@@ -292,7 +298,7 @@ def test_status_public_fields_and_no_private_data(
     body = response.json()
 
     assert body["application"] == "SAE-DEMO"
-    assert body["stage"] == "M5C"
+    assert body["stage"] == "M5D"
     assert body["backend_status"] == "ok"
     assert body["target_model"] == DEFAULT_NEBIUS_MODEL
     assert body["memory_feature_status"] == web_app.MEMORY_FEATURE_STATUS
@@ -916,6 +922,373 @@ def test_full_seven_turn_mocked_run_completes_off_and_on(
 
 
 # ===========================================================================
+# M5D: controlled Memory OFF/ON comparison
+# ===========================================================================
+
+
+def _complete_run(client: TestClient, scenario_id: str, memory_mode: str) -> dict:
+    """Start and fully advance one run; return its final RunState JSON."""
+
+    responses = _run_full_scenario(client, scenario_id, memory_mode=memory_mode)
+    return responses[-1].json()
+
+
+def _build_ready_comparison(client: TestClient, scenario_id: str, first_mode: str):
+    """Complete a first run, create+complete its alternate, and return
+    ``(comparison_json, first_run_json, alternate_final_json)`` with the
+    comparison expected to be ``status == "ready"``.
+    """
+
+    first_run = _complete_run(client, scenario_id, first_mode)
+    alternate_start = client.post(f"/api/runs/{first_run['run_id']}/alternate").json()
+    alternate_id = alternate_start["run_id"]
+
+    alternate_final = alternate_start
+    for _ in range(alternate_start["total_segments"]):
+        alternate_final = client.post(f"/api/runs/{alternate_id}/advance").json()
+
+    comparison = client.get(f"/api/comparisons/{alternate_start['comparison_id']}").json()
+    return comparison, first_run, alternate_final
+
+
+# 1. completed OFF run can create ON alternate
+def test_completed_off_run_can_create_on_alternate(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    off_run = _complete_run(client, "greenhouse", "off")
+
+    response = client.post(f"/api/runs/{off_run['run_id']}/alternate")
+    body = response.json()
+
+    assert response.status_code == 201
+    assert body["memory_mode"] == "on"
+    assert body["comparison_id"]
+    assert body["run_id"] != off_run["run_id"]
+
+
+# 2. completed ON run can create OFF alternate
+def test_completed_on_run_can_create_off_alternate(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    on_run = _complete_run(client, "greenhouse", "on")
+
+    response = client.post(f"/api/runs/{on_run['run_id']}/alternate")
+    body = response.json()
+
+    assert response.status_code == 201
+    assert body["memory_mode"] == "off"
+    assert body["comparison_id"]
+    assert body["run_id"] != on_run["run_id"]
+
+
+# 3. alternate uses same scenario
+def test_alternate_uses_same_scenario(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    off_run = _complete_run(client, "new_studio", "off")
+
+    alternate = client.post(f"/api/runs/{off_run['run_id']}/alternate").json()
+
+    assert alternate["scenario_id"] == "new_studio"
+    assert alternate["scenario_title"] == off_run["scenario_title"]
+
+
+# 4. alternate starts fresh history (never reuses the original's)
+def test_alternate_starts_fresh_history(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    off_run = _complete_run(client, "greenhouse", "off")
+    assert len(mock_provider.calls) == 7  # the OFF run's own 7 turns
+
+    alternate = client.post(f"/api/runs/{off_run['run_id']}/alternate").json()
+    assert alternate["transcript"] == []
+    assert alternate["current_segment_number"] == 1
+
+    client.post(f"/api/runs/{alternate['run_id']}/advance")
+    assert len(mock_provider.calls) == 8  # exactly one more call, not fourteen
+
+    alternate_first_call = mock_provider.calls[-1]
+    # Base history (system + policy + memory label + memory payload,
+    # since the alternate is Memory ON) plus this turn's one user
+    # message -- never the seven prior OFF turns.
+    assert len(alternate_first_call) == 5
+
+
+# 5. alternate has opposite memory mode
+def test_alternate_has_opposite_memory_mode(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    off_run = _complete_run(client, "greenhouse", "off")
+    off_alternate = client.post(f"/api/runs/{off_run['run_id']}/alternate").json()
+    assert off_alternate["memory_mode"] == "on"
+
+    on_run = _complete_run(client, "new_studio", "on")
+    on_alternate = client.post(f"/api/runs/{on_run['run_id']}/alternate").json()
+    assert on_alternate["memory_mode"] == "off"
+
+
+# 6. exact scenario segments identical across pair
+def test_paired_run_scenario_segments_identical(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    comparison, first_run, _alt = _build_ready_comparison(client, "greenhouse", "off")
+
+    expected_ids = [turn["segment_id"] for turn in first_run["transcript"]]
+    expected_texts = {turn["segment_id"]: turn["user_text"] for turn in first_run["transcript"]}
+
+    assert comparison["status"] == "ready"
+    assert [segment["segment_id"] for segment in comparison["segments"]] == expected_ids
+    for segment in comparison["segments"]:
+        assert segment["text"] == expected_texts[segment["segment_id"]]
+
+
+# 7. policy identical across pair
+def test_paired_runs_use_identical_behavioral_policy(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    first_run = _complete_run(client, "greenhouse", "off")
+    first_leg_call = mock_provider.calls[0]
+
+    alternate = client.post(f"/api/runs/{first_run['run_id']}/alternate").json()
+    client.post(f"/api/runs/{alternate['run_id']}/advance")
+    second_leg_call = mock_provider.calls[-1]
+
+    first_policy_texts = [m["content"] for m in first_leg_call if m["role"] == "system"]
+    second_policy_texts = [m["content"] for m in second_leg_call if m["role"] == "system"]
+    assert DEFAULT_BEHAVIORAL_USE_POLICY in first_policy_texts
+    assert DEFAULT_BEHAVIORAL_USE_POLICY in second_policy_texts
+
+
+# 8. model/provider settings identical across pair
+def test_paired_runs_report_same_target_model(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    comparison, _first_run, _alt = _build_ready_comparison(client, "greenhouse", "off")
+    status_body = client.get("/api/status").json()
+
+    assert comparison["target_model"] == status_body["target_model"] == DEFAULT_NEBIUS_MODEL
+
+
+# 9. incomplete run cannot yield completed comparison
+def test_incomplete_run_cannot_create_alternate(
+    client: TestClient, mock_provider: _FakeProviderRecorder
+) -> None:
+    start = client.post(
+        "/api/runs", json={"scenario_id": "greenhouse", "memory_mode": "off"}
+    ).json()
+
+    response = client.post(f"/api/runs/{start['run_id']}/alternate")
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == web_app.RUN_NOT_COMPLETE_MESSAGE
+
+
+def test_comparison_stays_pending_until_both_runs_complete(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    off_run = _complete_run(client, "greenhouse", "off")
+    alternate = client.post(f"/api/runs/{off_run['run_id']}/alternate").json()
+
+    comparison = client.get(f"/api/comparisons/{alternate['comparison_id']}").json()
+    assert comparison["status"] == "pending"
+    assert comparison["segments"] == []
+
+    client.post(f"/api/runs/{alternate['run_id']}/advance")  # only 1 of 7
+    comparison = client.get(f"/api/comparisons/{alternate['comparison_id']}").json()
+    assert comparison["status"] == "pending"
+    assert comparison["segments"] == []
+
+
+# 10. comparison requires one OFF and one ON
+def test_cannot_pair_a_run_twice(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    off_run = _complete_run(client, "greenhouse", "off")
+    client.post(f"/api/runs/{off_run['run_id']}/alternate")
+
+    second_attempt = client.post(f"/api/runs/{off_run['run_id']}/alternate")
+
+    assert second_attempt.status_code == 409
+    assert second_attempt.json()["detail"] == web_app.RUN_ALREADY_PAIRED_MESSAGE
+
+
+def test_comparison_always_pairs_one_off_and_one_on(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    comparison, _first_run, _alt = _build_ready_comparison(client, "greenhouse", "on")
+
+    off_run_state = client.get(f"/api/runs/{comparison['off_run_id']}").json()
+    on_run_state = client.get(f"/api/runs/{comparison['on_run_id']}").json()
+
+    assert off_run_state["memory_mode"] == "off"
+    assert on_run_state["memory_mode"] == "on"
+    assert comparison["off_run_id"] != comparison["on_run_id"]
+
+
+# 11. comparison endpoint excludes system messages
+def test_comparison_response_excludes_system_message(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    comparison, _first_run, _alt = _build_ready_comparison(client, "greenhouse", "off")
+
+    body_text = json.dumps(comparison)
+    assert DEFAULT_SYSTEM_MESSAGE not in body_text
+    assert DEFAULT_BEHAVIORAL_USE_POLICY not in body_text
+
+
+# 12. comparison excludes memory payload
+def test_comparison_response_excludes_memory_payload(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    comparison, _first_run, _alt = _build_ready_comparison(client, "greenhouse", "off")
+
+    assert MEMORY_PAYLOAD_TEXT not in json.dumps(comparison)
+
+
+# 13. comparison excludes memory path/hash
+def test_comparison_response_excludes_memory_path_and_hash(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    comparison, _first_run, _alt = _build_ready_comparison(client, "greenhouse", "off")
+
+    body_text = json.dumps(comparison)
+    assert str(configured_memory_artifact) not in body_text
+    expected_hash = hashlib.sha256(MEMORY_PAYLOAD_TEXT.encode("utf-8")).hexdigest()
+    assert expected_hash not in body_text
+
+
+# 14. comparison excludes API key
+def test_comparison_response_excludes_api_key(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    comparison, _first_run, _alt = _build_ready_comparison(client, "greenhouse", "off")
+
+    assert FAKE_API_KEY not in json.dumps(comparison)
+
+
+# 15. paired run transcripts align by segment
+def test_paired_run_transcripts_align_by_segment(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, configured_memory_artifact
+) -> None:
+    monkeypatch.setenv("NEBIUS_API_KEY", FAKE_API_KEY)
+    recorder = _FakeProviderRecorder()
+
+    class IndexedFakeProvider:
+        """Returns a distinct, call-index-tagged reply each time, so a
+        test can verify a comparison's per-segment alignment rather
+        than merely that both columns happen to hold the same string.
+        """
+
+        def __init__(self, config, *, client=None) -> None:
+            self.config = config
+
+        def complete(self, messages, *, max_tokens: int = 100) -> NebiusCompletionResult:
+            recorder.calls.append([dict(message) for message in messages])
+            index = len(recorder.calls)
+            return NebiusCompletionResult(
+                content=f"reply-{index}",
+                reasoning=None,
+                finish_reason="stop",
+                completion_tokens=4,
+                reasoning_warning=False,
+            )
+
+    monkeypatch.setattr(web_app, "NebiusProvider", IndexedFakeProvider)
+
+    off_run = _complete_run(client, "greenhouse", "off")  # provider calls 1-7
+    alternate = client.post(f"/api/runs/{off_run['run_id']}/alternate").json()
+    for _ in range(alternate["total_segments"]):
+        client.post(f"/api/runs/{alternate['run_id']}/advance")  # provider calls 8-14
+
+    comparison = client.get(f"/api/comparisons/{alternate['comparison_id']}").json()
+
+    assert comparison["status"] == "ready"
+    for i, segment in enumerate(comparison["segments"]):
+        assert segment["off_assistant_text"] == f"reply-{i + 1}"
+        assert segment["on_assistant_text"] == f"reply-{i + 8}"
+
+
+# 16. full mocked OFF -> ON comparison completes
+def test_full_mocked_off_to_on_comparison_completes(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    comparison, first_run, alt = _build_ready_comparison(client, "greenhouse", "off")
+
+    assert first_run["memory_mode"] == "off"
+    assert alt["memory_mode"] == "on"
+    assert comparison["status"] == "ready"
+    assert comparison["off_completed"] is True
+    assert comparison["on_completed"] is True
+    assert len(comparison["segments"]) == 7
+
+
+# 17. full mocked ON -> OFF comparison completes
+def test_full_mocked_on_to_off_comparison_completes(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    comparison, first_run, alt = _build_ready_comparison(client, "greenhouse", "on")
+
+    assert first_run["memory_mode"] == "on"
+    assert alt["memory_mode"] == "off"
+    assert comparison["status"] == "ready"
+    assert comparison["off_completed"] is True
+    assert comparison["on_completed"] is True
+    assert len(comparison["segments"]) == 7
+
+
+# 18. provider failure in alternate condition is handled safely
+def test_provider_failure_in_alternate_condition_is_handled_safely(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, configured_memory_artifact
+) -> None:
+    monkeypatch.setenv("NEBIUS_API_KEY", FAKE_API_KEY)
+    ok_recorder = _FakeProviderRecorder()
+    monkeypatch.setattr(web_app, "NebiusProvider", _make_fake_provider_class(ok_recorder))
+
+    off_run = _complete_run(client, "greenhouse", "off")
+
+    fail_recorder = _FakeProviderRecorder()
+    monkeypatch.setattr(web_app, "NebiusProvider", _make_failing_provider_class(fail_recorder))
+
+    alternate = client.post(f"/api/runs/{off_run['run_id']}/alternate").json()
+    advance_response = client.post(f"/api/runs/{alternate['run_id']}/advance")
+    body = advance_response.json()
+
+    assert advance_response.status_code == 200
+    assert body["failed"] is True
+    assert body["error"] == web_app.PROVIDER_REQUEST_FAILED_MESSAGE
+
+    comparison = client.get(f"/api/comparisons/{alternate['comparison_id']}").json()
+    assert comparison["status"] == "failed"
+    assert comparison["segments"] == []
+    assert comparison["on_failed"] is True
+    assert "FakeProviderFailure" not in json.dumps(comparison)
+
+
+def test_unknown_comparison_returns_safe_404(client: TestClient) -> None:
+    response = client.get("/api/comparisons/does-not-exist")
+
+    assert response.status_code == 404
+    assert "detail" in response.json()
+    assert "Traceback" not in response.text
+    _assert_no_forbidden_material(response.text)
+
+
+# 19. prior M5A/B/C tests continue to pass: see every test above this
+# section, all still present and (where the new required provider/
+# memory-mode configuration makes it necessary) adapted rather than
+# deleted -- run as part of this same file/suite.
+
+
+# 20. no private SAE data appears
+def test_comparison_response_excludes_private_sae_material(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    comparison, _first_run, _alt = _build_ready_comparison(client, "greenhouse", "off")
+
+    _assert_no_forbidden_material(json.dumps(comparison))
+
+
+# ===========================================================================
 # Frontend content tests (static-source assertions; no browser/DOM engine)
 # ===========================================================================
 
@@ -965,3 +1338,76 @@ def test_frontend_shows_human_readable_errors(client: TestClient) -> None:
     assert "extractErrorMessage" in response.text
     assert "Unable to reach the backend right now" in response.text
     assert "Unable to start that scenario right now" in response.text
+    assert "Unable to start the comparison run right now" in response.text
+
+
+# -- M5D frontend --------------------------------------------------------
+
+
+def test_frontend_has_compare_alternate_action(client: TestClient) -> None:
+    response = client.get("/")
+    assert 'id="compare-alternate-btn"' in response.text
+
+    app_js = client.get("/static/app.js").text
+    assert "showCompareButton" in app_js
+    assert "Compare with Memory " in app_js
+    assert "/alternate" in app_js
+
+
+def test_frontend_indicates_comparison_run_mode(client: TestClient) -> None:
+    app_js = client.get("/static/app.js").text
+
+    assert "Comparison run: " in app_js
+    assert "comparison_id" in app_js
+
+
+def test_frontend_comparison_panel_renders_both_conditions(client: TestClient) -> None:
+    response = client.get("/")
+    assert 'id="comparison-panel"' in response.text
+    assert 'id="comparison-segments"' in response.text
+
+    app_js = client.get("/static/app.js").text
+    assert "renderComparisonColumn" in app_js
+    assert '"Memory OFF"' in app_js
+    assert '"Memory ON"' in app_js
+
+
+def test_frontend_comparison_shares_exact_scenario_text_once_per_segment(
+    client: TestClient,
+) -> None:
+    app_js = client.get("/static/app.js").text
+
+    assert "renderComparisonSegment" in app_js
+    # The shared scenario segment text is rendered once per segment
+    # (textP.textContent = segment.text), not duplicated inside each
+    # of the two columns.
+    assert "segment.text" in app_js
+
+
+def test_frontend_never_renders_internal_memory_or_system_content_in_comparison(
+    client: TestClient,
+) -> None:
+    for path in ("/", "/static/app.js", "/static/styles.css"):
+        response = client.get(path)
+        assert DEFAULT_BEHAVIORAL_USE_POLICY not in response.text
+        assert DEFAULT_SYSTEM_MESSAGE not in response.text
+        assert MEMORY_PAYLOAD_TEXT not in response.text
+        _assert_no_forbidden_material(response.text)
+
+
+def test_frontend_has_no_automated_winner_or_scoring_language(client: TestClient) -> None:
+    forbidden_phrases = (
+        "winner",
+        "wins",
+        "superior",
+        "better response",
+        "worse response",
+        "score",
+        "scoring",
+        "ranking",
+        "best response",
+    )
+    for path in ("/", "/static/app.js", "/static/styles.css"):
+        text = client.get(path).text.lower()
+        for phrase in forbidden_phrases:
+            assert phrase not in text

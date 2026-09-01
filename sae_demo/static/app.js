@@ -1,4 +1,4 @@
-// M5A/M5B/M5C frontend behavior.
+// M5A/M5B/M5C/M5D frontend behavior.
 //
 // M5A: on load, check backend health and status, show a connected/error
 // indicator.
@@ -9,10 +9,16 @@
 // M5C: choose Memory OFF or Memory ON before starting a run (fixed for
 // that run's lifetime -- start a new run for the other condition), and
 // render each advanced segment's real assistant response as a growing
-// User/Scenario + Assistant conversation. This page never renders any
-// system/background message, the memory payload, or any private
-// artifact detail -- only the scenario's own segment text and the
-// model's reply to it, exactly as the API returns them.
+// User/Scenario + Assistant conversation.
+//
+// M5D: once a run completes, offer to replay the exact same scenario as
+// a fresh run under the opposite memory condition; once both runs have
+// completed, fetch and render the aligned Memory OFF / Memory ON
+// comparison. This page never renders any system/background message,
+// the memory payload, or any private artifact detail -- only the
+// scenario's own segment text and each condition's reply to it, exactly
+// as the API returns them -- and never rates, ranks, or labels either
+// response as preferable.
 
 let currentRunId = null;
 let scenariosById = {};
@@ -137,6 +143,15 @@ function setMemoryModeControlsEnabled(enabled) {
   });
 }
 
+function memoryModeDisplayLabel(run) {
+  const modeText = run.memory_mode === "on" ? "Memory ON" : "Memory OFF";
+  // M5D: a run created as the opposite-condition replay of an already-
+  // completed run is a "comparison run" for its whole lifetime -- this
+  // is set from the moment it's created (see comparison_id below), not
+  // only once it finishes.
+  return run.comparison_id ? "Comparison run: " + modeText : "Memory: " + modeText;
+}
+
 // -- Run flow ------------------------------------------------------------
 
 function roleLabel(segment) {
@@ -194,13 +209,14 @@ function renderRunState(run) {
   const textEl = document.getElementById("current-segment-text");
   const completedMessage = document.getElementById("completed-message");
   const runErrorEl = document.getElementById("run-error");
+  const compareBtn = document.getElementById("compare-alternate-btn");
   const startAnotherBtn = document.getElementById("start-another-btn");
   const conversationEl = document.getElementById("conversation");
 
   runView.hidden = false;
   progressEl.textContent =
     "Segment " + run.current_segment_number + " of " + run.total_segments;
-  memoryModeLabel.textContent = "Memory: " + (run.memory_mode === "on" ? "ON" : "OFF");
+  memoryModeLabel.textContent = memoryModeDisplayLabel(run);
 
   conversationEl.innerHTML = "";
   run.transcript.forEach((turn) => {
@@ -212,15 +228,38 @@ function renderRunState(run) {
     completedMessage.hidden = true;
     runErrorEl.hidden = false;
     runErrorEl.textContent = run.error || "The run stopped after an error.";
+    compareBtn.hidden = true;
     startAnotherBtn.hidden = false;
+    if (run.comparison_id) {
+      // The alternate condition failed -- the pair can never become a
+      // complete comparison. Say so plainly rather than showing a
+      // partial or misleading side-by-side view.
+      showComparisonStatusNote(
+        "This comparison could not be completed because one of the two runs failed."
+      );
+    } else {
+      hideComparisonPanel();
+    }
   } else if (run.completed) {
     currentCard.hidden = true;
     completedMessage.hidden = false;
     runErrorEl.hidden = true;
     startAnotherBtn.hidden = false;
+    if (run.comparison_id) {
+      // This run is one half of a pair -- fetch and (once the other
+      // half is also done) reveal the comparison. Offering a second
+      // "Compare with ..." action here would attempt to pair a third
+      // run, which the backend rejects.
+      compareBtn.hidden = true;
+      loadComparison(run.comparison_id);
+    } else {
+      showCompareButton(run.memory_mode);
+      hideComparisonPanel();
+    }
   } else {
     completedMessage.hidden = true;
     runErrorEl.hidden = true;
+    compareBtn.hidden = true;
     startAnotherBtn.hidden = true;
     currentCard.hidden = false;
     roleEl.textContent = roleLabel(run.current_segment);
@@ -253,6 +292,7 @@ async function startScenario() {
     }
     const run = await response.json();
     setMemoryModeControlsEnabled(false);
+    hideComparisonPanel();
     renderRunState(run);
   } catch (error) {
     showScenarioError("Unable to reach the backend right now. Please try again.");
@@ -290,6 +330,145 @@ async function advanceSegment() {
   }
 }
 
+// -- M5D: controlled comparison -------------------------------------------
+
+function showCompareButton(currentMode) {
+  const btn = document.getElementById("compare-alternate-btn");
+  const alternateMode = currentMode === "on" ? "off" : "on";
+  btn.textContent = "Compare with Memory " + (alternateMode === "on" ? "ON" : "OFF");
+  btn.hidden = false;
+}
+
+async function compareAlternate() {
+  const btn = document.getElementById("compare-alternate-btn");
+  clearScenarioError();
+  if (!currentRunId) {
+    return;
+  }
+  btn.disabled = true;
+
+  try {
+    const response = await fetch("/api/runs/" + currentRunId + "/alternate", {
+      method: "POST",
+    });
+    if (!response.ok) {
+      const message = await extractErrorMessage(
+        response,
+        "Unable to start the comparison run right now. Please try again."
+      );
+      showScenarioError(message);
+      return;
+    }
+    const run = await response.json();
+    hideComparisonPanel();
+    renderRunState(run);
+  } catch (error) {
+    showScenarioError("Unable to reach the backend right now. Please try again.");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function hideComparisonPanel() {
+  document.getElementById("comparison-panel").hidden = true;
+  document.getElementById("comparison-status-note").hidden = true;
+}
+
+function showComparisonStatusNote(message) {
+  document.getElementById("comparison-segments").innerHTML = "";
+  document.getElementById("comparison-summary").textContent = "";
+  const noteEl = document.getElementById("comparison-status-note");
+  noteEl.textContent = message;
+  noteEl.hidden = false;
+  document.getElementById("comparison-panel").hidden = false;
+}
+
+function renderComparisonColumn(label, text) {
+  const column = document.createElement("div");
+  column.className = "comparison-column";
+
+  const labelP = document.createElement("p");
+  labelP.className = "turn-speaker";
+  labelP.textContent = label;
+
+  const textP = document.createElement("p");
+  textP.className = "assistant-text";
+  textP.textContent = text || "(no response)";
+
+  column.appendChild(labelP);
+  column.appendChild(textP);
+  return column;
+}
+
+function renderComparisonSegment(segment) {
+  const wrapper = document.createElement("div");
+  wrapper.className = "comparison-segment";
+
+  const roleP = document.createElement("p");
+  roleP.className = "segment-role";
+  roleP.textContent = segment.role_label;
+
+  const textP = document.createElement("p");
+  textP.className = "segment-text";
+  textP.textContent = segment.text;
+
+  const columns = document.createElement("div");
+  columns.className = "comparison-columns";
+  columns.appendChild(renderComparisonColumn("Memory OFF", segment.off_assistant_text));
+  columns.appendChild(renderComparisonColumn("Memory ON", segment.on_assistant_text));
+
+  wrapper.appendChild(roleP);
+  wrapper.appendChild(textP);
+  wrapper.appendChild(columns);
+  return wrapper;
+}
+
+function renderComparison(comparison) {
+  if (comparison.status !== "ready") {
+    // Not both sides are done yet (or the pairing hasn't produced a
+    // usable state for some other reason) -- an incomplete comparison
+    // is never shown as though it were complete.
+    hideComparisonPanel();
+    return;
+  }
+
+  const panel = document.getElementById("comparison-panel");
+  const summaryEl = document.getElementById("comparison-summary");
+  const noteEl = document.getElementById("comparison-status-note");
+  const segmentsEl = document.getElementById("comparison-segments");
+
+  summaryEl.textContent =
+    comparison.scenario_title +
+    " — " +
+    comparison.target_model +
+    " — Memory OFF vs Memory ON — " +
+    comparison.total_segments +
+    " segments, completed — controlled comparison (same scenario, fresh runs)";
+  noteEl.hidden = true;
+  noteEl.textContent = "";
+
+  segmentsEl.innerHTML = "";
+  comparison.segments.forEach((segment) => {
+    segmentsEl.appendChild(renderComparisonSegment(segment));
+  });
+
+  panel.hidden = false;
+}
+
+async function loadComparison(comparisonId) {
+  try {
+    const response = await fetch("/api/comparisons/" + comparisonId);
+    if (!response.ok) {
+      return;
+    }
+    const comparison = await response.json();
+    renderComparison(comparison);
+  } catch (error) {
+    // The per-run conversation view above is still available even if
+    // this fetch fails -- fail quietly rather than blocking the page.
+  }
+}
+
 function resetRunView() {
   currentRunId = null;
   document.getElementById("run-view").hidden = true;
@@ -297,7 +476,9 @@ function resetRunView() {
   document.getElementById("completed-message").hidden = true;
   document.getElementById("current-segment-card").hidden = true;
   document.getElementById("run-error").hidden = true;
+  document.getElementById("compare-alternate-btn").hidden = true;
   document.getElementById("start-another-btn").hidden = true;
+  hideComparisonPanel();
   setMemoryModeControlsEnabled(true);
   clearScenarioError();
 }
@@ -305,6 +486,7 @@ function resetRunView() {
 function wireScenarioControls() {
   document.getElementById("start-scenario-btn").addEventListener("click", startScenario);
   document.getElementById("next-segment-btn").addEventListener("click", advanceSegment);
+  document.getElementById("compare-alternate-btn").addEventListener("click", compareAlternate);
   document.getElementById("start-another-btn").addEventListener("click", resetRunView);
 }
 
