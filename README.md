@@ -4,7 +4,7 @@ A standalone Nebius hackathon project demonstrating SAE (Stable Emotion) Emotion
 
 ## Status
 
-Planning stage only. No application code exists yet. This commit initializes project structure and specification documents; implementation has not begun.
+M3A: Nebius/NVIDIA transport layer implemented (`sae_demo/config.py`, `sae_demo/nebius_provider.py`), with offline mocked tests. No UI, conversation controller, or Emotional Memory consumer exists yet — this milestone is transport-only.
 
 ## What this project is
 
@@ -23,3 +23,24 @@ SAE-DEMO is a clean-room project, independently implemented. It is not a fork, c
 - `docs/PRODUCT_SPEC.md` — product purpose, user flow, MVP scope, explicit non-goals
 - `docs/ARCHITECTURE.md` — component-level architecture for the independent demo
 - `docs/DISCLOSURE_BOUNDARY.md` — short operational rules for what may/may not enter this repository
+
+## Nebius/NVIDIA provider setup (M3A)
+
+The `sae_demo` package contains a minimal, independently written adapter for the Nebius Token Factory OpenAI-compatible API (`sae_demo/nebius_provider.py`), plus environment-based configuration loading (`sae_demo/config.py`).
+
+Confirmed working configuration for this project:
+
+- Base URL: `https://api.tokenfactory.nebius.com/v1/`
+- Model: `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`
+- Non-reasoning control (always sent by the provider): `extra_body={"chat_template_kwargs": {"enable_thinking": False}}`
+
+These are the package defaults; they can be overridden via environment variables if needed.
+
+### Local setup
+
+1. Copy `.env.example` to `.env` and fill in your own `NEBIUS_API_KEY`. `.env` is gitignored and must never be committed.
+2. Install dependencies: `pip install -r requirements-dev.txt`
+3. Run the automated (offline, mocked, no network/API key required) test suite: `pytest`
+4. Optionally run the manual live smoke test against the real API (uses your real key and incurs provider usage): `python scripts/smoke_nebius.py`
+
+The provider treats any unexpected non-null `reasoning` field in a response as a configuration/safety warning rather than a fatal error, and logs a warning if one appears.
