@@ -36,6 +36,14 @@ This script does not execute any run by itself when invoked with no
 arguments beyond --fixture; a human must explicitly choose --memory
 profile/network and point at a specific local artifact file to opt in
 to a Memory ON run.
+
+Unicode console output (M3D.1): on Windows, the process's stdout and
+stderr default to the legacy ANSI code page rather than UTF-8, which
+cannot represent some Unicode characters a model response may contain
+and can also produce garbled ("mojibake") output. Before printing
+anything, this script reconfigures stdout/stderr to UTF-8 (see
+sae_demo/console_io.py) -- it does not filter, escape, or
+ASCII-normalize model output.
 """
 
 import argparse
@@ -50,6 +58,7 @@ from dotenv import load_dotenv
 
 from sae_demo.compatibility_runner import CompatibilityRunner, DEFAULT_MAX_TOKENS
 from sae_demo.config import load_nebius_config
+from sae_demo.console_io import configure_utf8_stdio
 from sae_demo.memory_loader import (
     MemoryArtifactError,
     REPRESENTATION_NETWORK,
@@ -73,6 +82,11 @@ MEMORY_CHOICES = (MEMORY_OFF, REPRESENTATION_PROFILE, REPRESENTATION_NETWORK)
 
 
 def main() -> None:
+    # Do this first, before any argument parsing or output: it only
+    # changes how text is *encoded* on the way to the terminal (or a
+    # redirected file), not what runs or what gets printed.
+    configure_utf8_stdio()
+
     parser = argparse.ArgumentParser(
         description=(
             "Synthetic compatibility harness: replays one built-in frozen "
