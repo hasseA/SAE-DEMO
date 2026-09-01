@@ -6,9 +6,15 @@
 *.key
 secrets/
 
-# Bounded demo Emotional Memory artifact — supplied from outside this project,
-# never generated or committed here until an explicit later decision defines
-# its format and provenance
+# Local-private runtime root (M3C.1) — live compatibility run traces,
+# provider outputs, generated scenario drafts, a future bounded
+# Emotional Memory artifact, and temporary runtime files. See
+# docs/RUNTIME_DATA_BOUNDARY.md. Ignored as a whole, one single root.
+.local/
+
+# Legacy bounded demo Emotional Memory artifact patterns from Stage 3
+# planning — superseded by .local/memory/ (see above) but kept here so
+# any file matching this older convention stays ignored too.
 demo_memory/
 *.demo-memory.json
 

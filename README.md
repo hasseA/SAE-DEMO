@@ -4,7 +4,7 @@ A standalone Nebius hackathon project demonstrating SAE (Stable Emotion) Emotion
 
 ## Status
 
-M3C: Memory-OFF synthetic compatibility runner implemented (`sae_demo/compatibility_runner.py`), replaying a frozen scenario through the Nebius/NVIDIA provider with full offline test coverage. M3B: backend scenario engine implemented (`sae_demo/scenario.py`, `sae_demo/scenario_engine.py`). M3A: Nebius/NVIDIA provider transport layer implemented (`sae_demo/config.py`, `sae_demo/nebius_provider.py`). No UI, Emotional Memory consumer, or Scenario Wizard exists yet, and Memory ON has not been implemented.
+M3C.1: local-private runtime data boundary hardened — a single gitignored `.local/` root (`runs/`, `memory/`, `generated/`, `tmp/`), a generic runtime-path helper (`sae_demo/runtime_paths.py`), and a deterministic disclosure/safety checker (`sae_demo/disclosure_guard.py`, `scripts/check_disclosure_boundary.py`). M3C: Memory-OFF synthetic compatibility runner implemented (`sae_demo/compatibility_runner.py`). M3B: backend scenario engine implemented. M3A: Nebius/NVIDIA provider transport layer implemented. No UI, Emotional Memory consumer, or Scenario Wizard exists yet, and Memory ON has not been implemented.
 
 ## What this project is
 
@@ -24,6 +24,7 @@ SAE-DEMO is a clean-room project, independently implemented. It is not a fork, c
 - `docs/ARCHITECTURE.md` — component-level architecture for the independent demo, including the M3B scenario engine and the future Scenario Wizard boundary
 - `docs/DISCLOSURE_BOUNDARY.md` — short operational rules for what may/may not enter this repository
 - `docs/COMPATIBILITY_HARNESS.md` — what the M3C compatibility runner is (and is not), Memory OFF only
+- `docs/RUNTIME_DATA_BOUNDARY.md` — the `.local/` runtime data boundary: what's tracked vs. local-only, and how it's checked
 
 ## Nebius/NVIDIA provider setup (M3A)
 
@@ -67,3 +68,13 @@ python scripts/run_compatibility.py --fixture greenhouse --max-tokens 150
 ```
 
 `--fixture` is required and selects one of the two built-in synthetic fixtures — no source edits needed to choose between them.
+
+## Runtime and local-private data boundary (M3C.1)
+
+All runtime-generated, non-public data — live run traces, provider outputs, generated scenario drafts, and any future bounded Emotional Memory artifact — belongs under a single gitignored root, `.local/` (`runs/`, `memory/`, `generated/`, `tmp/`), resolved by `sae_demo/runtime_paths.py` (default `<repo>/.local`, overridable via `SAE_DEMO_LOCAL_DIR`). Nothing in this project writes there today. Before committing, check the boundary:
+
+```
+python scripts/check_disclosure_boundary.py
+```
+
+See `docs/RUNTIME_DATA_BOUNDARY.md` for the full tracked-vs-local-only split and the rule this stage enforces: nothing originating from private SAE is Git-tracked in SAE-DEMO by default.

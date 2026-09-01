@@ -29,6 +29,10 @@ This repository is built independently. Nothing is copied, ported, translated, o
 - Illustrative, synthetic-data visualizations of the Emotional Memory concept and of proposed recognition/activation behavior, the latter always labeled "Prototype / Conceptual"
 - A consumer for one bounded, externally-supplied Emotional Memory export, treated as an opaque input whose internal format this project does not need to know or replicate from the private schema
 
+## Runtime data (M3C.1)
+
+**Nothing originating from private SAE is Git-tracked in SAE-DEMO by default.** This applies to source material covered above and, separately, to this project's own runtime output: live run traces, provider responses, generated scenario drafts, and any future bounded Emotional Memory artifact are local-only by default, under the gitignored `.local/` root. See `docs/RUNTIME_DATA_BOUNDARY.md` for the full local/tracked split and how that boundary is checked before a commit.
+
 ## When in doubt
 
 If it's unclear whether something may enter this repository, stop and raise it rather than including it. This file is a summary for day-to-day development, not a substitute for the private repository's controlling disclosure document.
