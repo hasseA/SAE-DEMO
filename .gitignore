@@ -1,0 +1,30 @@
+# Secrets / local configuration — never commit API keys or credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Bounded demo Emotional Memory artifact — supplied from outside this project,
+# never generated or committed here until an explicit later decision defines
+# its format and provenance
+demo_memory/
+*.demo-memory.json
+
+# Dependencies / build output
+node_modules/
+dist/
+build/
+.venv/
+__pycache__/
+*.pyc
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
