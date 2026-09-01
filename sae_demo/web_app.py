@@ -1,34 +1,37 @@
-"""Minimal FastAPI web shell for SAE-DEMO (M5A, extended in M5B).
+"""Minimal FastAPI web shell for SAE-DEMO (M5A, extended M5B, M5C).
 
 This module serves the static frontend and exposes a small, typed
-API. M5A added a health/status API only. M5B adds a scenario-run API
-that wires the existing, unchanged ``ScenarioEngine`` into the web
-app: listing the two built-in clean-room synthetic fixtures, starting
-an in-memory ``frozen``-mode run, and advancing it one segment at a
-time.
+API. M5A added a health/status API only. M5B wired the existing,
+unchanged ``ScenarioEngine`` into a Memory-OFF, provider-free
+scenario-run flow. M5C connects that same flow to the existing,
+unchanged ``NebiusProvider``, opaque memory loader, and M4B
+behavioral-use policy, so each "advance" now sends the next segment
+through a real provider call and returns a real assistant response,
+under either Memory OFF or Memory ON.
 
-M5B does not make any provider call, does not load or access any
-Emotional Memory artifact, and does not implement Memory OFF/ON or
-comparison logic -- those remain out of scope and land in later M5
-stages (see ``docs/M5_DEMO_SPEC.md``). Every scenario run in this
-module is Memory OFF; the frontend labels each segment's response area
-as "Model response will appear in M5C" rather than showing any real or
-simulated model output.
+M5C deliberately does not implement a second copy of memory-placement
+or behavioral-policy semantics: it drives
+``compatibility_runner.CompatibilityRunner.build_history()`` /
+``.send_turn()`` (the exact same implementation ``CompatibilityRunner
+.run()`` itself uses internally, factored out for step-by-step use --
+see that module's docstring) instead of reimplementing message
+ordering here. This module never parses, transforms, or inspects an
+Emotional Memory payload -- it only loads it opaquely (once, at run
+start, via ``sae_demo/memory_loader.py``) and hands it to the runner
+exactly as loaded.
 
-Run state lives only in a process-local, in-memory registry (a plain
-dict guarded by a lock) -- there is no database and nothing is written
-to disk. A server restart clears all runs, and this registry is not a
-solution for multi-user or distributed concurrency; it only keeps
-concurrent requests inside this one process from corrupting a single
-run's state.
+Memory ON uses exactly one operator-configured artifact, resolved from
+the ``SAE_DEMO_MEMORY_FILE`` environment variable -- never a hardcoded
+path or filename in source, and never a profile/network choice exposed
+to the UI. Run state (including conversation history and any loaded
+memory payload) lives only in a process-local, in-memory registry;
+nothing is written to disk, and a server restart clears every run.
 
-``/api/status`` and the scenario endpoints intentionally return only
-public-safe, demo-safe fields. Scenario summaries and run state expose
-the existing, generic, public-safe semantic-role vocabulary already
-used by ``sae_demo/scenario.py`` and the two synthetic fixtures
-already used by ``scripts/run_compatibility.py`` and the offline test
-suite -- nothing from the private SAE repository, no private artifact
-paths, and no API key value ever appears in a response.
+No response from this module ever includes: the API key, ``.env``
+contents, the memory payload, its hash, its file path or
+representation label, the system message, the behavioral-use policy
+text, or any other private/internal detail -- see ``StatusResponse``,
+``RunState``, and the safe, generic error messages used throughout.
 """
 
 from __future__ import annotations
@@ -36,16 +39,25 @@ from __future__ import annotations
 import os
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .config import DEFAULT_NEBIUS_MODEL
+from .compatibility_runner import (
+    DEFAULT_BEHAVIORAL_USE_POLICY,
+    DEFAULT_MAX_TOKENS,
+    CompatibilityRunner,
+    MemoryPayloadIntegrityError,
+    TurnMetadata,
+)
+from .config import DEFAULT_NEBIUS_MODEL, MissingNebiusAPIKeyError, load_nebius_config
+from .memory_loader import MemoryArtifactError, load_opaque_memory_artifact
+from .nebius_provider import NebiusProvider
 from .scenario import MODE_FROZEN, Scenario
 from .scenario_engine import NoMoreSegmentsError, ScenarioEngine, SentSegmentRecord
 
@@ -60,9 +72,25 @@ from tests.fixtures.synthetic_scenarios import (
 )
 
 APP_NAME = "SAE-DEMO"
-STAGE_LABEL = "M5B"
-MEMORY_FEATURE_STATUS = "not active in M5B"
-SCENARIO_FEATURE_STATUS = "active in M5B (Memory OFF only)"
+STAGE_LABEL = "M5C"
+MEMORY_FEATURE_STATUS = "active in M5C (one configured artifact, Memory ON/OFF)"
+SCENARIO_FEATURE_STATUS = "active in M5C (real provider responses)"
+
+# Never a hardcoded path or filename -- an operator points this at a
+# local, gitignored artifact under .local/memory/ themselves, exactly
+# as scripts/run_compatibility.py's --memory-file already requires.
+MEMORY_FILE_ENV_VAR = "SAE_DEMO_MEMORY_FILE"
+
+# Safe, generic messages only -- never a file path, hash, representation
+# label, or raw exception text.
+MEMORY_NOT_CONFIGURED_MESSAGE = "Memory artifact is not configured for this demo."
+MEMORY_LOAD_FAILED_MESSAGE = "Memory artifact could not be loaded."
+MEMORY_INTEGRITY_FAILED_MESSAGE = "Memory artifact failed integrity verification."
+PROVIDER_NOT_CONFIGURED_MESSAGE = "Provider is not configured for this demo."
+PROVIDER_REQUEST_FAILED_MESSAGE = "The model provider request failed. Please try again."
+
+MEMORY_OFF = "off"
+MEMORY_ON = "on"
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 INDEX_HTML_PATH = STATIC_DIR / "index.html"
@@ -128,7 +156,7 @@ class ScenarioSummary(BaseModel):
 
 
 class SegmentView(BaseModel):
-    """One scenario segment as shown to the web UI.
+    """One not-yet-sent scenario segment, as previewed to the web UI.
 
     ``role`` is the existing generic semantic-role key; ``role_label``
     is its public-safe human-readable form (see ``ROLE_LABELS``).
@@ -140,42 +168,80 @@ class SegmentView(BaseModel):
     text: str
 
 
+class ConversationTurn(BaseModel):
+    """One already-sent segment, paired with its assistant response.
+
+    ``assistant_text`` and ``error`` are mutually exclusive in
+    practice: a successful turn has a response and no error; a failed
+    turn (a provider request that failed) has no response and a safe,
+    generic error message instead -- never a fabricated response.
+    Never includes the memory payload, the system message, or the
+    behavioral-use policy text -- only the scenario segment's own text
+    and the model's reply to it.
+    """
+
+    segment_id: str
+    role: str
+    role_label: str
+    user_text: str
+    assistant_text: Optional[str] = None
+    reasoning_present: bool = False
+    error: Optional[str] = None
+
+
 class RunState(BaseModel):
     """Full state of one in-memory scenario run.
 
-    ``current_segment`` is the next not-yet-sent segment (``None``
-    once the run is complete). ``transcript`` holds only segments
-    already sent. Neither this model nor any handler that builds it
-    ever includes a model response -- M5B makes no provider call.
+    ``memory_mode`` is fixed for the lifetime of a run -- it is set
+    once at start and never changes. ``current_segment`` is the next
+    not-yet-sent segment (``None`` once the run is complete or has
+    failed). ``transcript`` holds only segments already sent, each
+    paired with its assistant response (or a safe error if that
+    segment's provider call failed).
     """
 
     run_id: str
     scenario_id: str
     scenario_title: str
     mode: str
+    memory_mode: str
     total_segments: int
     current_segment_number: int
     completed: bool
+    failed: bool
+    error: Optional[str] = None
     current_segment: Optional[SegmentView] = None
-    transcript: List[SegmentView] = []
+    transcript: List[ConversationTurn] = []
 
 
 class StartRunRequest(BaseModel):
     scenario_id: str
+    # Optional and defaulting to "off" so an older, pre-M5C request
+    # body (scenario_id only) still behaves exactly as Memory OFF.
+    # Any other value is rejected (422) by this Literal type -- this is
+    # the "validate strictly" requirement for M5C.
+    memory_mode: Literal["off", "on"] = "off"
 
 
 @dataclass
 class _RunEntry:
     engine: ScenarioEngine
     scenario_key: str
+    memory_mode: str
+    runner: CompatibilityRunner
+    history: List[Dict[str, str]]
+    turns: List[TurnMetadata] = field(default_factory=list)
+    failed: bool = False
+    error: Optional[str] = None
 
 
 # Process-local, in-memory only. No database, no disk persistence, no
-# writes under .local/. Cleared on every server restart. The lock
-# serializes registry reads/writes and per-run mutation (advancing a
-# run) against concurrent requests within this one process -- it does
-# not attempt to solve multi-user or distributed concurrency, which is
-# explicitly out of scope for M5B.
+# writes under .local/ -- a completed or in-progress run's transcript
+# is never written to any tracked or runtime-data directory. Cleared
+# on every server restart. The lock serializes registry reads/writes
+# and per-run mutation (advancing a run) against concurrent requests
+# within this one process -- it does not attempt to solve multi-user
+# or distributed concurrency, which remains explicitly out of scope.
 _RUN_REGISTRY: Dict[str, _RunEntry] = {}
 _REGISTRY_LOCK = threading.Lock()
 
@@ -189,23 +255,44 @@ def _segment_view(segment) -> SegmentView:
     )
 
 
-def _segment_view_from_record(record: SentSegmentRecord) -> SegmentView:
-    return SegmentView(
+def _conversation_turn(record: SentSegmentRecord, turn: Optional[TurnMetadata]) -> ConversationTurn:
+    if turn is None:
+        return ConversationTurn(
+            segment_id=record.segment_id,
+            role=record.role,
+            role_label=_role_label(record.role),
+            user_text=record.text_sent,
+        )
+    return ConversationTurn(
         segment_id=record.segment_id,
         role=record.role,
         role_label=_role_label(record.role),
-        text=record.text_sent,
+        user_text=record.text_sent,
+        assistant_text=turn.assistant_text,
+        reasoning_present=turn.reasoning_present,
+        # A generic, safe message only -- never the underlying
+        # exception text (which is itself already scrubbed by
+        # NebiusProvider, but this module deliberately does not rely
+        # on that and uses its own fixed, generic message instead).
+        error=PROVIDER_REQUEST_FAILED_MESSAGE if turn.error is not None else None,
     )
 
 
 def _run_state(run_id: str, entry: _RunEntry) -> RunState:
     engine = entry.engine
     trace = engine.run_trace()
-    transcript = [_segment_view_from_record(record) for record in trace.sent_segments]
     total_segments = len(trace.segment_order)
-    completed = engine.is_complete
 
-    if completed:
+    turns_by_segment: Dict[str, TurnMetadata] = {turn.segment_id: turn for turn in entry.turns}
+    transcript = [
+        _conversation_turn(record, turns_by_segment.get(record.segment_id))
+        for record in trace.sent_segments
+    ]
+
+    if entry.failed:
+        current_segment = None
+        current_segment_number = len(trace.sent_segments)
+    elif engine.is_complete:
         current_segment = None
         current_segment_number = total_segments
     else:
@@ -217,12 +304,53 @@ def _run_state(run_id: str, entry: _RunEntry) -> RunState:
         scenario_id=entry.scenario_key,
         scenario_title=trace.scenario_title,
         mode=trace.mode,
+        memory_mode=entry.memory_mode,
         total_segments=total_segments,
         current_segment_number=current_segment_number,
-        completed=completed,
+        completed=engine.is_complete and not entry.failed,
+        failed=entry.failed,
+        error=entry.error,
         current_segment=current_segment,
         transcript=transcript,
     )
+
+
+def _resolve_memory_payload():
+    """Load the one configured Memory ON artifact, opaquely.
+
+    Returns the loaded ``OpaqueMemoryArtifact``. Raises `HTTPException`
+    (503, safe generic message) if no artifact is configured or it
+    cannot be loaded/verified -- never exposes the configured path,
+    the artifact's representation label, or any hash value. The
+    payload itself is never parsed, transformed, or inspected here or
+    anywhere downstream -- only passed through opaquely to
+    `CompatibilityRunner`.
+    """
+
+    configured_path = os.environ.get(MEMORY_FILE_ENV_VAR)
+    if not configured_path:
+        raise HTTPException(status_code=503, detail=MEMORY_NOT_CONFIGURED_MESSAGE)
+
+    try:
+        return load_opaque_memory_artifact(configured_path)
+    except MemoryArtifactError:
+        raise HTTPException(status_code=503, detail=MEMORY_LOAD_FAILED_MESSAGE) from None
+
+
+def _build_provider():
+    """Construct a NebiusProvider from environment configuration only.
+
+    Raises `HTTPException` (503, safe generic message) if no provider
+    API key is configured. Never logs, returns, or otherwise exposes
+    the key's value.
+    """
+
+    try:
+        config = load_nebius_config()
+    except MissingNebiusAPIKeyError:
+        raise HTTPException(status_code=503, detail=PROVIDER_NOT_CONFIGURED_MESSAGE) from None
+
+    return NebiusProvider(config), config.model
 
 
 app = FastAPI(title=APP_NAME)
@@ -272,12 +400,50 @@ def start_run(payload: StartRunRequest) -> RunState:
     if build_fixture is None:
         raise HTTPException(status_code=404, detail="Unknown scenario.")
 
+    # Checked for both Memory OFF and Memory ON -- advancing either
+    # condition requires a configured provider, so this is verified
+    # up front rather than failing partway through a run.
+    provider, model_label = _build_provider()
+
+    memory_payload = None
+    memory_payload_sha256 = None
+    if payload.memory_mode == MEMORY_ON:
+        artifact = _resolve_memory_payload()
+        memory_payload = artifact.payload
+        memory_payload_sha256 = artifact.content_sha256
+
     scenario = build_fixture(mode=MODE_FROZEN)
     engine = ScenarioEngine(scenario)
+
+    runner = CompatibilityRunner(
+        provider,
+        model_label=model_label,
+        max_tokens=DEFAULT_MAX_TOKENS,
+        memory_payload=memory_payload,
+        memory_payload_sha256=memory_payload_sha256,
+        # Sent unconditionally, identically, for Memory OFF and Memory
+        # ON alike -- never a condition-specific difference. This is
+        # the same invariant scripts/run_compatibility.py already
+        # relies on; see
+        # docs/decisions/SAE_DEMO_M4_CONSUMPTION_BOUNDARY_FREEZE.md.
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
+    )
+
+    try:
+        history, _memory_used = runner.build_history()
+    except MemoryPayloadIntegrityError:
+        raise HTTPException(status_code=503, detail=MEMORY_INTEGRITY_FAILED_MESSAGE) from None
+
     run_id = uuid.uuid4().hex
+    entry = _RunEntry(
+        engine=engine,
+        scenario_key=payload.scenario_id,
+        memory_mode=payload.memory_mode,
+        runner=runner,
+        history=history,
+    )
 
     with _REGISTRY_LOCK:
-        entry = _RunEntry(engine=engine, scenario_key=payload.scenario_id)
         _RUN_REGISTRY[run_id] = entry
 
     return _run_state(run_id, entry)
@@ -297,12 +463,26 @@ def advance_run(run_id: str) -> RunState:
         entry = _RUN_REGISTRY.get(run_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="Unknown run.")
+        if entry.failed:
+            raise HTTPException(status_code=409, detail="Run failed and cannot continue.")
         if entry.engine.is_complete:
             raise HTTPException(status_code=409, detail="Run already completed.")
+
         try:
-            entry.engine.advance()
+            sent_record = entry.engine.advance()
         except NoMoreSegmentsError as exc:  # pragma: no cover - defensive
             raise HTTPException(status_code=409, detail="Run already completed.") from exc
+
+        turn = entry.runner.send_turn(
+            entry.history, sent_record.segment_id, sent_record.role, sent_record.text_sent
+        )
+        entry.turns.append(turn)
+
+        if turn.error is not None:
+            entry.failed = True
+            entry.error = PROVIDER_REQUEST_FAILED_MESSAGE
+        else:
+            entry.engine.record_model_response(sent_record.segment_id, turn.assistant_text or "")
 
     return _run_state(run_id, entry)
 

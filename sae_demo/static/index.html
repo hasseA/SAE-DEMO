@@ -26,6 +26,23 @@
     <section id="scenario-panel" class="status-card">
       <h2>Scenario</h2>
 
+      <fieldset id="memory-mode-fieldset">
+        <legend>Memory</legend>
+        <label class="radio-option">
+          <input type="radio" name="memory-mode" value="off" checked />
+          Memory OFF
+        </label>
+        <p class="status-detail">Run the model without a prepared Emotional Memory.</p>
+        <label class="radio-option">
+          <input type="radio" name="memory-mode" value="on" />
+          Memory ON
+        </label>
+        <p class="status-detail">
+          Run the same scenario with a prepared Emotional Memory supplied as
+          background context.
+        </p>
+      </fieldset>
+
       <div id="scenario-select-row">
         <label for="scenario-select">Choose a scenario</label>
         <select id="scenario-select" disabled>
@@ -37,20 +54,23 @@
 
       <div id="run-view" hidden>
         <p id="run-progress" class="status-detail"></p>
+        <p id="run-memory-mode-label" class="status-detail"></p>
 
         <div id="current-segment-card" class="segment-card" hidden>
           <p class="segment-role" id="current-segment-role"></p>
           <p class="segment-text" id="current-segment-text"></p>
-          <p class="model-response-note">Model response will appear in M5C</p>
           <button id="next-segment-btn" type="button">Next Segment</button>
         </div>
 
         <div id="completed-message" hidden>
           <p class="status-text status-ok">Scenario complete.</p>
-          <button id="start-another-btn" type="button">Start another scenario</button>
         </div>
 
-        <div id="transcript" aria-label="Completed transcript"></div>
+        <p id="run-error" class="status-text status-error" hidden></p>
+
+        <button id="start-another-btn" type="button" hidden>Start another scenario</button>
+
+        <div id="conversation" aria-label="Conversation transcript"></div>
       </div>
 
       <p id="scenario-error" class="status-text status-error" hidden></p>
@@ -58,15 +78,11 @@
 
     <section class="placeholder-grid" aria-label="Upcoming demo areas">
       <div class="placeholder-card">
-        <h3>Memory OFF / ON</h3>
-        <p class="coming-soon">Coming in a later M5 stage.</p>
-      </div>
-      <div class="placeholder-card">
-        <h3>Conversation</h3>
-        <p class="coming-soon">Coming in a later M5 stage.</p>
-      </div>
-      <div class="placeholder-card">
         <h3>Comparison</h3>
+        <p class="coming-soon">Coming in a later M5 stage.</p>
+      </div>
+      <div class="placeholder-card">
+        <h3>Emotional Memory concept</h3>
         <p class="coming-soon">Coming in a later M5 stage.</p>
       </div>
     </section>
@@ -74,9 +90,11 @@
 
   <footer>
     <p>
-      M5B: scenario runs are Memory OFF only, in-memory, and reset on server
-      restart. Memory ON, the model response, and comparison are not yet
-      wired to this page.
+      M5C: Memory OFF and Memory ON runs use one operator-configured
+      Emotional Memory artifact and send real requests to the configured
+      model. Memory mode is fixed once a run starts &mdash; start a new run to
+      try the other condition. Side-by-side comparison comes in a later M5
+      stage.
     </p>
   </footer>
 

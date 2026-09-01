@@ -156,27 +156,79 @@ label {
   white-space: pre-line;
 }
 
-.model-response-note {
-  margin: 0.75rem 0 0;
-  font-size: 0.85rem;
-  font-style: italic;
+#completed-message {
+  margin-top: 0.75rem;
+}
+
+#run-error {
+  margin-top: 0.75rem;
+}
+
+#start-another-btn {
+  margin-top: 0.5rem;
+}
+
+#memory-mode-fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem 1rem;
+  margin: 0 0 1rem;
+}
+
+#memory-mode-fieldset legend {
+  font-size: 0.8rem;
+  font-weight: 600;
   color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0 0.35rem;
 }
 
-#current-segment-card .model-response-note {
-  margin-bottom: 0.75rem;
+.radio-option {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.95rem;
+  color: var(--text);
+  margin: 0.5rem 0 0;
 }
 
-#transcript {
+.radio-option input {
+  margin: 0;
+}
+
+#memory-mode-fieldset .status-detail {
+  margin: 0.15rem 0 0 1.4rem;
+}
+
+#conversation {
   margin-top: 1rem;
 }
 
-#transcript .segment-card {
+.conversation-turn {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
   margin-top: 0.6rem;
 }
 
-#completed-message {
-  margin-top: 0.75rem;
+.turn-speaker {
+  margin: 0.75rem 0 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.conversation-turn .turn-speaker:first-of-type {
+  margin-top: 0.5rem;
+}
+
+.assistant-text {
+  margin: 0;
+  white-space: pre-line;
 }
 
 .placeholder-grid {

@@ -51,6 +51,18 @@ Independent of the Nebius provider's internals beyond its public
 `complete()` method; independent of any UI; independent of the
 private SAE Emotional Memory implementation -- this module has no
 import from, and no knowledge of, private SAE code or schema.
+
+Incremental use (M5C): `run()` replays an entire scenario in one call,
+which does not fit a web UI that advances one segment at a time. Its
+memory-placement/behavioral-policy logic is factored into two public
+methods, `build_history()` and `send_turn()`, which `run()` itself now
+calls internally. A caller that needs step-by-step control (e.g. the
+web app's scenario-run flow in `sae_demo/web_app.py`) calls
+`build_history()` once and `send_turn()` once per segment instead of
+`run()`, sharing this exact same implementation rather than
+reimplementing memory placement or behavioral-policy ordering
+separately -- there is intentionally only one implementation of that
+logic in this project.
 """
 
 from __future__ import annotations
@@ -265,14 +277,25 @@ class CompatibilityRunner:
         # scripts/run_compatibility.py does this unconditionally.
         self._behavioral_use_policy = behavioral_use_policy
 
-    def run(self, scenario: Scenario) -> CompatibilityRunResult:
-        if scenario.mode != MODE_FROZEN:
-            raise NotAFrozenScenarioError(
-                "CompatibilityRunner only supports frozen-mode scenarios "
-                f"(reproducible replay); got mode={scenario.mode!r}."
-            )
+    def build_history(self) -> Tuple[List[Dict[str, str]], bool]:
+        """Build the fixed, pre-scenario conversation history for one run.
 
-        engine = ScenarioEngine(scenario)
+        This is the *only* place memory placement/policy ordering is
+        implemented: system message, then the behavioral-use policy
+        (sent identically regardless of memory), then -- only when a
+        memory payload is supplied -- an independent hash re-check,
+        the memory context label, and the opaque payload itself,
+        each its own isolated ``system``-role message. Both `run` and
+        any incremental caller (e.g. a step-by-step web run) share this
+        one implementation so memory/policy semantics cannot drift
+        between an all-at-once and a one-segment-at-a-time execution
+        path.
+
+        Returns ``(history, memory_used)``. Raises
+        `MemoryPayloadIntegrityError` (no provider call made) if a
+        supplied expected hash no longer matches the payload.
+        """
+
         history: List[Dict[str, str]] = []
         if self._system_message:
             history.append({"role": "system", "content": self._system_message})
@@ -300,48 +323,80 @@ class CompatibilityRunner:
             # rewritten alongside, any other text.
             history.append({"role": "system", "content": self._memory_payload})
 
+        return history, memory_used
+
+    def send_turn(
+        self,
+        history: List[Dict[str, str]],
+        segment_id: str,
+        role: str,
+        user_text: str,
+    ) -> TurnMetadata:
+        """Send one already-obtained segment's text and record the turn.
+
+        Mutates `history` in place (appends the user message, and, on
+        success, the assistant message) so a caller driving a run one
+        segment at a time can keep reusing the same accumulated
+        history object across calls -- this is the same accumulation
+        behavior `run` itself relies on internally.
+        """
+
+        history.append({"role": "user", "content": user_text})
+
+        try:
+            result = self._provider.complete(history, max_tokens=self._max_tokens)
+        except NebiusProviderError as exc:
+            return TurnMetadata(
+                segment_id=segment_id,
+                role=role,
+                user_text_sent=user_text,
+                assistant_text=None,
+                finish_reason=None,
+                model=self._model_label,
+                reasoning_present=False,
+                completion_tokens=None,
+                error=str(exc),
+            )
+
+        assistant_text = result.content
+        history.append({"role": "assistant", "content": assistant_text or ""})
+
+        return TurnMetadata(
+            segment_id=segment_id,
+            role=role,
+            user_text_sent=user_text,
+            assistant_text=assistant_text,
+            finish_reason=result.finish_reason,
+            model=self._model_label,
+            reasoning_present=result.reasoning_warning,
+            completion_tokens=result.completion_tokens,
+        )
+
+    def run(self, scenario: Scenario) -> CompatibilityRunResult:
+        if scenario.mode != MODE_FROZEN:
+            raise NotAFrozenScenarioError(
+                "CompatibilityRunner only supports frozen-mode scenarios "
+                f"(reproducible replay); got mode={scenario.mode!r}."
+            )
+
+        engine = ScenarioEngine(scenario)
+        history, memory_used = self.build_history()
+
         turns: List[TurnMetadata] = []
 
         while not engine.is_complete:
             sent_record = engine.advance()
-            history.append({"role": "user", "content": sent_record.text_sent})
+            turn = self.send_turn(
+                history, sent_record.segment_id, sent_record.role, sent_record.text_sent
+            )
+            turns.append(turn)
 
-            try:
-                result = self._provider.complete(history, max_tokens=self._max_tokens)
-            except NebiusProviderError as exc:
-                turns.append(
-                    TurnMetadata(
-                        segment_id=sent_record.segment_id,
-                        role=sent_record.role,
-                        user_text_sent=sent_record.text_sent,
-                        assistant_text=None,
-                        finish_reason=None,
-                        model=self._model_label,
-                        reasoning_present=False,
-                        completion_tokens=None,
-                        error=str(exc),
-                    )
-                )
+            if turn.error is not None:
                 # Stop the run cleanly on failure rather than advancing
                 # past a segment whose response was never obtained.
                 break
 
-            assistant_text = result.content
-            history.append({"role": "assistant", "content": assistant_text or ""})
-            engine.record_model_response(sent_record.segment_id, assistant_text or "")
-
-            turns.append(
-                TurnMetadata(
-                    segment_id=sent_record.segment_id,
-                    role=sent_record.role,
-                    user_text_sent=sent_record.text_sent,
-                    assistant_text=assistant_text,
-                    finish_reason=result.finish_reason,
-                    model=self._model_label,
-                    reasoning_present=result.reasoning_warning,
-                    completion_tokens=result.completion_tokens,
-                )
-            )
+            engine.record_model_response(sent_record.segment_id, turn.assistant_text or "")
 
         return CompatibilityRunResult(
             scenario_id=scenario.scenario_id,
