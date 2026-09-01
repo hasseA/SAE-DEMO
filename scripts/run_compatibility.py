@@ -1,4 +1,4 @@
-"""Human-run CLI for the Memory-OFF synthetic compatibility runner.
+"""Human-run CLI for the synthetic compatibility runner.
 
 Not part of the automated test suite and not intended to be executed
 by an automated agent — it makes real, live Nebius/NVIDIA API calls
@@ -9,7 +9,7 @@ This is a compatibility check, not a scientific experiment. It only
 verifies that the target model can carry a scripted, multi-turn
 synthetic scenario through the Nebius/NVIDIA provider with the
 confirmed non-reasoning configuration — it draws no scientific
-conclusions and supplies no Emotional Memory (Memory OFF only).
+conclusions.
 
 Usage (from the repository root):
 
@@ -19,6 +19,23 @@ Usage (from the repository root):
 
 No fixture is hardcoded as a default — pick one explicitly with
 --fixture so nothing needs to be edited in source to change it.
+
+Memory selection (M3D): by default this script runs Memory OFF, exactly
+as before. To run with an existing local, gitignored, opaque memory
+artifact instead, pass both --memory {profile,network} and
+--memory-file pointing at that artifact's envelope file (see
+sae_demo/memory_loader.py). No artifact name or path is hardcoded here
+-- this script has no built-in notion of any particular memory lineage
+or research theme, and does not know or print the artifact's payload
+content; it only loads, validates, and passes it through opaquely.
+
+    python scripts/run_compatibility.py --fixture greenhouse \\
+        --memory profile --memory-file .local/memory/<name>.json
+
+This script does not execute any run by itself when invoked with no
+arguments beyond --fixture; a human must explicitly choose --memory
+profile/network and point at a specific local artifact file to opt in
+to a Memory ON run.
 """
 
 import argparse
@@ -33,6 +50,12 @@ from dotenv import load_dotenv
 
 from sae_demo.compatibility_runner import CompatibilityRunner, DEFAULT_MAX_TOKENS
 from sae_demo.config import load_nebius_config
+from sae_demo.memory_loader import (
+    MemoryArtifactError,
+    REPRESENTATION_NETWORK,
+    REPRESENTATION_PROFILE,
+    load_opaque_memory_artifact,
+)
 from sae_demo.nebius_provider import NebiusProvider
 from sae_demo.scenario import MODE_FROZEN
 from tests.fixtures.synthetic_scenarios import (
@@ -45,13 +68,17 @@ FIXTURES = {
     "new_studio": build_benign_transition_fixture,
 }
 
+MEMORY_OFF = "off"
+MEMORY_CHOICES = (MEMORY_OFF, REPRESENTATION_PROFILE, REPRESENTATION_NETWORK)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Memory-OFF synthetic compatibility harness: replays one "
-            "built-in frozen synthetic fixture, segment by segment, "
-            "through the live Nebius/NVIDIA provider."
+            "Synthetic compatibility harness: replays one built-in frozen "
+            "synthetic fixture, segment by segment, through the live "
+            "Nebius/NVIDIA provider, optionally with an existing local, "
+            "opaque memory artifact attached."
         )
     )
     parser.add_argument(
@@ -66,20 +93,68 @@ def main() -> None:
         default=DEFAULT_MAX_TOKENS,
         help=f"Max tokens per turn (default: {DEFAULT_MAX_TOKENS}).",
     )
+    parser.add_argument(
+        "--memory",
+        choices=MEMORY_CHOICES,
+        default=MEMORY_OFF,
+        help=(
+            "Memory condition: 'off' (default, no memory artifact used), "
+            "'profile', or 'network'. 'profile'/'network' require "
+            "--memory-file."
+        ),
+    )
+    parser.add_argument(
+        "--memory-file",
+        type=Path,
+        default=None,
+        help=(
+            "Path to a local opaque memory artifact envelope (see "
+            "sae_demo/memory_loader.py). Required when --memory is "
+            "'profile' or 'network'; not used with --memory off. Nothing "
+            "in this script hardcodes which artifact to use -- point it "
+            "at whichever local file you intend to test."
+        ),
+    )
     args = parser.parse_args()
+
+    if args.memory == MEMORY_OFF:
+        if args.memory_file is not None:
+            parser.error("--memory-file must not be given when --memory is 'off'.")
+        memory_payload = None
+    else:
+        if args.memory_file is None:
+            parser.error(
+                f"--memory-file is required when --memory is {args.memory!r}."
+            )
+        try:
+            artifact = load_opaque_memory_artifact(args.memory_file)
+        except MemoryArtifactError as exc:
+            parser.error(f"Could not load memory artifact: {exc}")
+            return  # pragma: no cover - argparse.error exits the process
+        if artifact.representation != args.memory:
+            parser.error(
+                f"--memory {args.memory!r} was requested but the artifact at "
+                f"{args.memory_file} declares representation "
+                f"{artifact.representation!r}."
+            )
+        memory_payload = artifact.payload
 
     load_dotenv()
     config = load_nebius_config()
     provider = NebiusProvider(config)
     runner = CompatibilityRunner(
-        provider, model_label=config.model, max_tokens=args.max_tokens
+        provider,
+        model_label=config.model,
+        max_tokens=args.max_tokens,
+        memory_payload=memory_payload,
     )
 
     build_fixture = FIXTURES[args.fixture]
     scenario = build_fixture(mode=MODE_FROZEN)
 
+    memory_label = "Memory OFF" if memory_payload is None else f"Memory ON ({args.memory})"
     print(
-        f"Compatibility check (Memory OFF only): '{scenario.title}' "
+        f"Compatibility check ({memory_label}): '{scenario.title}' "
         f"[{args.fixture}] against {config.model}\n"
     )
 
@@ -100,6 +175,7 @@ def main() -> None:
         print()
 
     print(f"Run completed: {result.completed}")
+    print(f"Memory used: {result.memory_used}")
     if not result.completed:
         print("Run stopped early after a provider error — see the ERROR line above.")
     if any(turn.reasoning_present for turn in result.turns):

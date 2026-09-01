@@ -1,9 +1,18 @@
-"""Offline tests for the Memory-OFF synthetic compatibility runner.
+"""Offline tests for the synthetic compatibility runner.
 
 No network calls. The Nebius provider's OpenAI client is replaced
 with a fake that returns pre-scripted responses (or raises) per call,
 so the full runner -> provider integration is exercised without any
 real API access.
+
+Memory-related tests (M3D) use only synthetic, fake in-memory strings
+standing in for a loaded opaque memory payload -- never any real
+Emotional Memory content, and never anything read from
+`sae_demo/memory_loader.py` or a real artifact file. These tests only
+prove the runner's own injection behavior: that Memory OFF changes
+nothing from prior behavior, and that a supplied payload string is
+passed through the conversation history unmodified, as its own
+isolated message.
 """
 
 import pytest
@@ -294,3 +303,162 @@ def test_interactive_scenario_is_rejected():
 
     with pytest.raises(NotAFrozenScenarioError):
         runner.run(_small_scenario(mode=MODE_INTERACTIVE))
+
+
+# --- memory injection (M3D) -------------------------------------------------
+#
+# All payload strings below are synthetic filler written for these tests
+# only. None of them are, or resemble, any real Emotional Memory content.
+
+_FAKE_PROFILE_LIKE_PAYLOAD = (
+    "FAKE PROFILE PAYLOAD :: synthetic test filler standing in for an "
+    "opaque profile-representation memory context, used only to prove "
+    "runner pass-through behavior."
+)
+
+_FAKE_NETWORK_LIKE_PAYLOAD = (
+    "FAKE NETWORK PAYLOAD :: synthetic test filler standing in for an "
+    "opaque network-representation memory context, longer and shaped "
+    "differently than the fake profile payload used elsewhere in this "
+    "file, used only to prove runner pass-through behavior."
+)
+
+
+def test_memory_off_by_default_produces_no_memory_related_messages():
+    """With no memory_payload supplied (the default), behavior must be
+    byte-for-byte identical to the pre-M3D Memory-OFF runner: only the
+    system message and the scenario's own segment text are ever sent.
+    """
+
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(provider, system_message="System context.")
+
+    result = runner.run(_small_scenario())
+
+    assert result.memory_used is False
+    first_call_messages = fake_client.completions.calls[0]["messages"]
+    assert [m["role"] for m in first_call_messages] == ["system", "user"]
+    assert first_call_messages[0]["content"] == "System context."
+    assert first_call_messages[1]["content"] == "Segment A text."
+    # No message anywhere in any call contains the memory context label
+    # or any fake memory payload text.
+    for call in fake_client.completions.calls:
+        for message in call["messages"]:
+            assert "Additional context" not in message["content"]
+            assert _FAKE_PROFILE_LIKE_PAYLOAD not in message["content"]
+            assert _FAKE_NETWORK_LIKE_PAYLOAD not in message["content"]
+
+
+def test_memory_off_explicit_none_matches_default():
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(provider, memory_payload=None)
+
+    result = runner.run(_small_scenario())
+
+    assert result.memory_used is False
+
+
+def test_profile_like_payload_injected_verbatim_as_isolated_message():
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(
+        provider,
+        system_message="System context.",
+        memory_payload=_FAKE_PROFILE_LIKE_PAYLOAD,
+    )
+
+    result = runner.run(_small_scenario())
+
+    assert result.memory_used is True
+    first_call_messages = fake_client.completions.calls[0]["messages"]
+    # system, memory-label, memory-payload, user -- payload is its own
+    # isolated message, never concatenated with the label or the
+    # scenario's own segment text.
+    assert [m["role"] for m in first_call_messages] == [
+        "system",
+        "system",
+        "system",
+        "user",
+    ]
+    assert first_call_messages[0]["content"] == "System context."
+    assert first_call_messages[2]["content"] == _FAKE_PROFILE_LIKE_PAYLOAD
+    assert first_call_messages[3]["content"] == "Segment A text."
+    # The payload body itself must appear completely unaltered.
+    assert first_call_messages[2]["content"] == _FAKE_PROFILE_LIKE_PAYLOAD
+
+
+def test_network_like_payload_injected_verbatim_as_isolated_message():
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(
+        provider,
+        system_message="System context.",
+        memory_payload=_FAKE_NETWORK_LIKE_PAYLOAD,
+    )
+
+    result = runner.run(_small_scenario())
+
+    assert result.memory_used is True
+    first_call_messages = fake_client.completions.calls[0]["messages"]
+    assert first_call_messages[2]["content"] == _FAKE_NETWORK_LIKE_PAYLOAD
+    assert first_call_messages[2]["content"] != _FAKE_PROFILE_LIKE_PAYLOAD
+
+
+def test_memory_payload_persists_unaltered_across_all_turns():
+    """The injected payload message is added once, ahead of the
+    scenario, and must remain present -- unaltered -- in every
+    subsequent call's accumulated history, exactly like the base
+    system message does.
+    """
+
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(
+        provider,
+        memory_payload=_FAKE_NETWORK_LIKE_PAYLOAD,
+    )
+
+    runner.run(_small_scenario())
+
+    for call in fake_client.completions.calls:
+        messages = call["messages"]
+        payload_messages = [m for m in messages if m["content"] == _FAKE_NETWORK_LIKE_PAYLOAD]
+        assert len(payload_messages) == 1
+
+
+def test_memory_context_label_can_be_omitted():
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(
+        provider,
+        system_message=None,
+        memory_payload=_FAKE_PROFILE_LIKE_PAYLOAD,
+        memory_context_label=None,
+    )
+
+    runner.run(_small_scenario())
+
+    first_call_messages = fake_client.completions.calls[0]["messages"]
+    # No base system message and no label -- just the payload message,
+    # then the user segment.
+    assert [m["role"] for m in first_call_messages] == ["system", "user"]
+    assert first_call_messages[0]["content"] == _FAKE_PROFILE_LIKE_PAYLOAD
+
+
+def test_result_reports_memory_used_flag_accurately():
+    responses_off = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider_off, _ = _provider_with(responses_off)
+    runner_off = CompatibilityRunner(provider_off)
+    result_off = runner_off.run(_small_scenario())
+
+    responses_on = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider_on, _ = _provider_with(responses_on)
+    runner_on = CompatibilityRunner(provider_on, memory_payload=_FAKE_PROFILE_LIKE_PAYLOAD)
+    result_on = runner_on.run(_small_scenario())
+
+    assert result_off.memory_used is False
+    assert result_on.memory_used is True
+    assert result_off.to_dict()["memory_used"] is False
+    assert result_on.to_dict()["memory_used"] is True
