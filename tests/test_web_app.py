@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from typing import Dict, List
 
 import pytest
@@ -38,7 +39,9 @@ from fastapi.testclient import TestClient
 from sae_demo import custom_scenario, memory_loader, web_app
 from sae_demo.compatibility_runner import (
     DEFAULT_BEHAVIORAL_USE_POLICY,
+    DEFAULT_MAX_TOKENS,
     DEFAULT_SYSTEM_MESSAGE,
+    MAX_TOKENS_ENV_VAR,
 )
 from sae_demo.config import DEFAULT_NEBIUS_MODEL
 from sae_demo.nebius_provider import NebiusCompletionResult, NebiusProviderError
@@ -92,6 +95,11 @@ def _assert_no_forbidden_material(text: str) -> None:
 class _FakeProviderRecorder:
     def __init__(self) -> None:
         self.calls: List[List[Dict[str, str]]] = []
+        # M5G: the exact `max_tokens` each call was made with, in the
+        # same order as `.calls` -- lets a test assert the resolved
+        # completion-token budget was actually forwarded, and that it
+        # is identical across a Memory OFF/ON pair.
+        self.max_tokens_calls: List[int] = []
 
 
 def _make_fake_provider_class(recorder: _FakeProviderRecorder, *, reasoning_present: bool = False):
@@ -101,6 +109,7 @@ def _make_fake_provider_class(recorder: _FakeProviderRecorder, *, reasoning_pres
 
         def complete(self, messages, *, max_tokens: int = 100) -> NebiusCompletionResult:
             recorder.calls.append([dict(message) for message in messages])
+            recorder.max_tokens_calls.append(max_tokens)
             return NebiusCompletionResult(
                 content=FAKE_ASSISTANT_REPLY,
                 reasoning=("(fake reasoning trace)" if reasoning_present else None),
@@ -119,6 +128,7 @@ def _make_failing_provider_class(recorder: _FakeProviderRecorder):
 
         def complete(self, messages, *, max_tokens: int = 100) -> NebiusCompletionResult:
             recorder.calls.append([dict(message) for message in messages])
+            recorder.max_tokens_calls.append(max_tokens)
             raise NebiusProviderError("Nebius request failed: FakeProviderFailure")
 
     return FailingNebiusProvider
@@ -299,7 +309,7 @@ def test_status_public_fields_and_no_private_data(
     body = response.json()
 
     assert body["application"] == "SAE-DEMO"
-    assert body["stage"] == "M5F"
+    assert body["stage"] == "M5G"
     assert body["backend_status"] == "ok"
     assert body["target_model"] == DEFAULT_NEBIUS_MODEL
     assert body["memory_feature_status"] == web_app.MEMORY_FEATURE_STATUS
@@ -1585,7 +1595,7 @@ def test_m5e_static_content_renders_with_no_api_key_configured(
 
     status = client.get("/api/status").json()
     assert status["provider_configured"] is False
-    assert status["stage"] == "M5F"
+    assert status["stage"] == "M5G"
 
 
 # -- M5F: Scenario Wizard / Bring Your Own Story -----------------------------
@@ -2030,3 +2040,287 @@ def test_wizard_flow_never_exposes_private_material(
     _assert_no_forbidden_material(json.dumps(comparison))
     for path in ("/", "/static/app.js", "/static/styles.css"):
         _assert_no_forbidden_material(client.get(path).text)
+
+
+# ============================================================================
+# M5G: Demo Hardening and Submission Readiness
+# ============================================================================
+#
+# This stage adds no new scenario/memory/scoring machinery -- these
+# tests cover what actually changed: the completion-token budget is
+# now one configurable, environment-backed value applied identically
+# to Memory OFF and Memory ON (built-in and custom scenarios alike),
+# a malformed provider response is hardened at the `nebius_provider`
+# unit level (see tests/test_nebius_provider.py -- not re-tested here
+# since this module's fake provider bypasses the real class entirely),
+# and a handful of frontend wording/robustness additions (a visible
+# "Waiting for model..." state, a "How to try it" section, wizard
+# framing text, and a purely visual OFF/ON comparison-column accent).
+
+
+# 1. OFF/ON built-in comparison uses an identical max_tokens value.
+def test_builtin_comparison_uses_identical_max_tokens(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    _build_ready_comparison(client, "greenhouse", "off")
+
+    assert mock_provider.max_tokens_calls  # at least one call was recorded
+    assert len(set(mock_provider.max_tokens_calls)) == 1
+    assert mock_provider.max_tokens_calls[0] == DEFAULT_MAX_TOKENS
+
+
+# 2. A configured SAE_DEMO_MAX_TOKENS override is applied identically
+# to both conditions of a built-in comparison.
+def test_builtin_comparison_respects_max_tokens_override(
+    client: TestClient,
+    mock_provider: _FakeProviderRecorder,
+    configured_memory_artifact,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(MAX_TOKENS_ENV_VAR, "888")
+
+    _build_ready_comparison(client, "new_studio", "on")
+
+    assert mock_provider.max_tokens_calls
+    assert set(mock_provider.max_tokens_calls) == {888}
+
+
+# 3. A custom (frozen) scenario's OFF/ON comparison also uses an
+# identical, resolved max_tokens value -- the same shared
+# `_start_run_entry` call site built-in scenarios use.
+def test_custom_scenario_comparison_uses_identical_max_tokens(
+    client: TestClient,
+    mock_provider: _FakeProviderRecorder,
+    configured_memory_artifact,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(MAX_TOKENS_ENV_VAR, "512")
+    frozen = _create_and_freeze_custom_scenario(client)
+    runnable_id = frozen["runnable_scenario_id"]
+
+    _build_ready_comparison(client, runnable_id, "off")
+
+    assert mock_provider.max_tokens_calls
+    assert set(mock_provider.max_tokens_calls) == {512}
+
+
+# 4. An invalid override value falls back to the documented default,
+# still applied identically to both conditions.
+def test_comparison_falls_back_to_default_max_tokens_on_invalid_override(
+    client: TestClient,
+    mock_provider: _FakeProviderRecorder,
+    configured_memory_artifact,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(MAX_TOKENS_ENV_VAR, "not-a-number")
+
+    _build_ready_comparison(client, "greenhouse", "off")
+
+    assert set(mock_provider.max_tokens_calls) == {DEFAULT_MAX_TOKENS}
+
+
+# 5. The configured max_tokens value is never exposed in any public
+# HTTP response -- it's an internal request parameter, not demo state.
+def test_max_tokens_value_never_exposed_in_responses(
+    client: TestClient,
+    mock_provider: _FakeProviderRecorder,
+    configured_memory_artifact,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(MAX_TOKENS_ENV_VAR, "999")
+    comparison, off_run, on_run = _build_ready_comparison(client, "greenhouse", "off")
+
+    # "max_tokens" is never a field name in any public response schema
+    # -- it's an internal request parameter to the provider call, not
+    # demo state. (The configured value itself, "999", isn't checked
+    # as a raw substring here: it can coincidentally appear inside an
+    # unrelated hex run/comparison id, which would make that check
+    # flaky rather than meaningful.)
+    for body in (comparison, off_run, on_run, client.get("/api/status").json()):
+        assert "max_tokens" not in json.dumps(body)
+
+
+# 6. Every public API response remains free of memory/system/private
+# metadata -- extends the existing per-endpoint checks above with one
+# sweep across the full built-in run/comparison lifecycle plus
+# /api/status, specifically re-checking the M5G-touched surfaces
+# (status, run state, comparison state) for the fields Section 10 of
+# the M5G task calls out: API key, memory payload/path/hash, system
+# message, behavioral-use policy text, provider request body.
+def test_public_responses_carry_no_memory_or_system_metadata(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    comparison, off_run, on_run = _build_ready_comparison(client, "greenhouse", "off")
+    status = client.get("/api/status").json()
+
+    for body in (comparison, off_run, on_run, status):
+        text = json.dumps(body)
+        assert FAKE_API_KEY not in text
+        assert MEMORY_PAYLOAD_TEXT not in text
+        assert DEFAULT_SYSTEM_MESSAGE not in text
+        assert DEFAULT_BEHAVIORAL_USE_POLICY not in text
+        assert str(configured_memory_artifact) not in text
+        _assert_no_forbidden_material(text)
+
+
+# -- Frontend: "How to try it" + loading state + wizard framing --------
+
+
+# 7. The frontend contains a short "How to try it" section.
+def test_frontend_has_how_to_try_section(client: TestClient) -> None:
+    text = client.get("/").text
+    assert 'id="how-to-try"' in text
+    assert "How to try it" in text
+
+
+# 8. A visible "Waiting for model..." state exists for the one action
+# that makes a real provider call.
+def test_frontend_has_waiting_for_model_state(client: TestClient) -> None:
+    text = client.get("/").text
+    assert 'id="run-waiting-text"' in text
+    assert "Waiting for model" in text
+
+
+# 9. advanceSegment (the only provider-calling action) disables its
+# trigger button before the fetch and re-enables it in a `finally`
+# block -- structural verification of the duplicate-click-prevention
+# pattern, in the absence of a JS runtime test harness in this
+# project (no package.json/JS test framework is set up; this follows
+# the same static-content-assertion style already used throughout
+# this test module for other frontend checks).
+def test_advance_segment_guards_against_duplicate_clicks() -> None:
+    js_text = (web_app.STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    start = js_text.index("async function advanceSegment")
+    end = js_text.index("\n}\n", start)
+    body = js_text[start:end]
+
+    assert "nextBtn.disabled = true" in body
+    assert "nextBtn.disabled = false" in body
+    assert "finally" in body
+    # Re-enabling happens inside the `finally` block, not only on the
+    # success path -- the `finally` keyword must appear after the
+    # disable and before the matching re-enable for that to hold given
+    # this function's structure.
+    assert body.index("finally") < body.rindex("nextBtn.disabled = false")
+
+
+# 10. The other action buttons that call the backend (start/compare)
+# follow the same disable-before-request, re-enable-in-finally pattern.
+@pytest.mark.parametrize(
+    "function_name,btn_expr",
+    [
+        ("startRunForScenario", "triggerBtn.disabled"),
+        ("compareAlternate", "btn.disabled"),
+    ],
+)
+def test_other_backend_actions_guard_against_duplicate_clicks(
+    function_name: str, btn_expr: str
+) -> None:
+    js_text = (web_app.STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    start = js_text.index(f"async function {function_name}")
+    end = js_text.index("\n}\n", start)
+    body = js_text[start:end]
+
+    assert f"{btn_expr} = true" in body
+    assert f"{btn_expr} = false" in body
+    assert "finally" in body
+
+
+# 11. The wizard frames the copy/paste external-AI workflow as
+# deliberate scenario preparation, not a missing/broken feature.
+def test_wizard_frames_external_ai_step_as_deliberate(client: TestClient) -> None:
+    text = _normalized_whitespace(client.get("/").text)
+    assert "deliberate scenario preparation" in text
+    assert "not a missing feature" in text
+
+
+# 12. Controlled-comparison vs. scenario-preparation language is
+# distinguishable at the wizard's review and freeze/run steps.
+def test_wizard_distinguishes_preparation_from_controlled_comparison(
+    client: TestClient,
+) -> None:
+    text = _normalized_whitespace(client.get("/").text)
+    assert "Still scenario preparation" in text
+    assert "This is the controlled comparison" in text
+
+
+# 13. The comparison view gives the two columns a distinguishing,
+# purely visual class -- never any ranking/preference language (see
+# test_frontend_has_no_automated_winner_or_scoring_language above for
+# the exhaustive forbidden-phrase sweep across the same static files).
+def test_comparison_columns_have_distinct_off_on_classes() -> None:
+    js_text = (web_app.STATIC_DIR / "app.js").read_text(encoding="utf-8")
+    css_text = (web_app.STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+    assert "comparison-column-off" in js_text
+    assert "comparison-column-on" in js_text
+    assert ".comparison-column-off" in css_text
+    assert ".comparison-column-on" in css_text
+
+
+# 14. No raw HTML/Markdown-rendering path exists for assistant or
+# scenario segment text -- everything is still assigned via
+# `.textContent`, never interpolated into an `innerHTML` string. This
+# is the concrete, checkable form of "no raw HTML injection path from
+# assistant output" -- a regex sweep for the one dangerous pattern
+# (`innerHTML` assigned a template literal/string built from a
+# response-derived variable) rather than an exhaustive HTML parse.
+def test_no_raw_html_injection_path_for_response_text() -> None:
+    js_text = (web_app.STATIC_DIR / "app.js").read_text(encoding="utf-8")
+
+    # No innerHTML assignment anywhere in this file directly
+    # interpolates response/segment-derived text -- every such
+    # assignment in this codebase is either a clear/reset (an empty
+    # string) or builds markup only from trusted, already-validated
+    # strings (e.g. wizard validation-issue codes), never
+    # assistant/user/segment text.
+    for match in re.finditer(r"\.innerHTML\s*=\s*(.+);", js_text):
+        rhs = match.group(1)
+        assert "assistant_text" not in rhs
+        assert "user_text" not in rhs
+        assert "segment.text" not in rhs
+        assert "off_assistant_text" not in rhs
+        assert "on_assistant_text" not in rhs
+
+    # The three response-rendering functions build their text nodes
+    # with `.textContent`, never `.innerHTML`.
+    for fn_name in ("renderConversationTurn", "renderComparisonColumn", "renderComparisonSegment"):
+        start = js_text.index(f"function {fn_name}")
+        end = js_text.index("\n}\n", start)
+        body = js_text[start:end]
+        assert ".textContent" in body
+        assert ".innerHTML" not in body
+
+
+# 15. Assistant/segment text is rendered with whitespace preserved
+# (Section 4's Option A: safe plain text, not a Markdown subset) --
+# verifies the CSS decision this stage confirmed rather than changed.
+def test_response_text_css_preserves_whitespace() -> None:
+    css_text = (web_app.STATIC_DIR / "styles.css").read_text(encoding="utf-8")
+
+    for start in (css_text.index(".assistant-text {"), css_text.index(".segment-text {")):
+        end = css_text.index("}", start)
+        rule = css_text[start:end]
+        assert "white-space" in rule
+
+
+# 16. Existing M5A-F suite continues to pass -- represented here by
+# re-running the built-in scenario lifecycle and the wizard freeze
+# flow end to end, which between them exercise the M5B-M5F invariants
+# this stage must not have disturbed. (The full historical suite is
+# re-run as part of every `pytest` invocation of this module; this
+# test is a targeted smoke check, not a substitute for that.)
+def test_m5a_through_m5f_smoke(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    comparison, _off, _on = _build_ready_comparison(client, "greenhouse", "off")
+    assert comparison["status"] == "ready"
+
+    frozen = _create_and_freeze_custom_scenario(client)
+    assert frozen["frozen"] is True
+    wizard_comparison, _, _ = _build_ready_comparison(
+        client, frozen["runnable_scenario_id"], "on"
+    )
+    assert wizard_comparison["status"] == "ready"

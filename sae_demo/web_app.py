@@ -29,6 +29,16 @@ controlled Memory OFF/ON comparison machinery M5D already built; no
 second run/comparison engine exists for custom scenarios. Custom
 scenario drafts are process-local and in-memory only, exactly like
 runs and comparisons -- never written to disk, cleared on restart.
+M5G is a hardening stage only: no new scientific claim, scoring, or
+scenario/memory machinery is added. It resolves the completion-token
+budget (``max_tokens``) from one configurable, environment-backed
+function (``compatibility_runner.resolve_max_tokens``) instead of a
+bare constant, still applied identically to Memory OFF and Memory ON
+(see that function's docstring for the rationale), and hardens
+``NebiusProvider`` against a malformed/empty provider response so a
+provider-side surprise becomes a safe per-turn error instead of an
+unhandled exception. It otherwise touches only frontend wording/
+polish, error-message safety, and documentation.
 
 M5C/M5D deliberately do not implement a second copy of memory-
 placement or behavioral-policy semantics: every run drives
@@ -85,10 +95,10 @@ from pydantic import BaseModel, Field
 
 from .compatibility_runner import (
     DEFAULT_BEHAVIORAL_USE_POLICY,
-    DEFAULT_MAX_TOKENS,
     CompatibilityRunner,
     MemoryPayloadIntegrityError,
     TurnMetadata,
+    resolve_max_tokens,
 )
 from .config import DEFAULT_NEBIUS_MODEL, MissingNebiusAPIKeyError, load_nebius_config
 from .memory_loader import MemoryArtifactError, load_opaque_memory_artifact
@@ -118,7 +128,7 @@ from tests.fixtures.synthetic_scenarios import (
 )
 
 APP_NAME = "SAE-DEMO"
-STAGE_LABEL = "M5F"
+STAGE_LABEL = "M5G"
 MEMORY_FEATURE_STATUS = "active in M5C (one configured artifact, Memory ON/OFF)"
 SCENARIO_FEATURE_STATUS = "active in M5F (built-in fixtures plus frozen custom scenarios)"
 
@@ -637,7 +647,15 @@ def _start_run_entry(scenario_id: str, memory_mode: str) -> Tuple[str, _RunEntry
     runner = CompatibilityRunner(
         provider,
         model_label=model_label,
-        max_tokens=DEFAULT_MAX_TOKENS,
+        # M5G: resolved once per run from `SAE_DEMO_MAX_TOKENS` (or the
+        # built-in default) via the same single function every caller
+        # uses -- see `compatibility_runner.resolve_max_tokens`. This
+        # call site is shared by every run (`POST /api/runs` and
+        # `.../alternate` alike, built-in and custom scenario alike),
+        # so Memory OFF and Memory ON always resolve the identical
+        # value from the identical environment; nothing here ever
+        # varies the budget by condition.
+        max_tokens=resolve_max_tokens(),
         memory_payload=memory_payload,
         memory_payload_sha256=memory_payload_sha256,
         # Sent unconditionally, identically, for Memory OFF and Memory

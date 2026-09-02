@@ -159,3 +159,76 @@ def test_provider_error_does_not_leak_secret():
 
     assert secret not in str(exc_info.value)
     assert "RuntimeError" in str(exc_info.value)
+
+
+# --- M5G: malformed-response hardening --------------------------------
+#
+# A response that comes back HTTP-successful but structurally
+# unexpected must still raise the same safe `NebiusProviderError` every
+# other provider failure raises -- never an unhandled `IndexError`/
+# `AttributeError` that would escape `CompatibilityRunner.send_turn`'s
+# `except NebiusProviderError` handling.
+
+
+class _EmptyChoicesResponse:
+    """A response whose `choices` list is empty -- e.g. a filtered or
+    otherwise unusual provider reply with no completion at all."""
+
+    def __init__(self):
+        self.choices = []
+        self.usage = _FakeUsage(0)
+
+
+class _NoChoicesAttributeResponse:
+    """A response missing the `choices` attribute entirely."""
+
+
+class _MessagelessChoice:
+    """A choice object with no `message` attribute at all."""
+
+
+class _NoMessageResponse:
+    def __init__(self):
+        self.choices = [_MessagelessChoice()]
+        self.usage = _FakeUsage(0)
+
+
+def test_malformed_response_empty_choices_raises_provider_error():
+    fake_client = _FakeClient(response=_EmptyChoicesResponse())
+    provider = NebiusProvider(_config(), client=fake_client)
+
+    with pytest.raises(NebiusProviderError) as exc_info:
+        provider.complete([{"role": "user", "content": "hi"}])
+
+    assert "malformed" in str(exc_info.value).lower()
+
+
+def test_malformed_response_missing_choices_attribute_raises_provider_error():
+    fake_client = _FakeClient(response=_NoChoicesAttributeResponse())
+    provider = NebiusProvider(_config(), client=fake_client)
+
+    with pytest.raises(NebiusProviderError):
+        provider.complete([{"role": "user", "content": "hi"}])
+
+
+def test_malformed_response_missing_message_raises_provider_error():
+    fake_client = _FakeClient(response=_NoMessageResponse())
+    provider = NebiusProvider(_config(), client=fake_client)
+
+    with pytest.raises(NebiusProviderError):
+        provider.complete([{"role": "user", "content": "hi"}])
+
+
+def test_malformed_response_error_never_leaks_response_repr():
+    # The error message must stay a safe, generic "malformed" message
+    # naming only the exception class -- never str(exc) or any part of
+    # the (possibly large/unexpected) response object itself.
+    fake_client = _FakeClient(response=_EmptyChoicesResponse())
+    provider = NebiusProvider(_config(), client=fake_client)
+
+    with pytest.raises(NebiusProviderError) as exc_info:
+        provider.complete([{"role": "user", "content": "hi"}])
+
+    message = str(exc_info.value)
+    assert "IndexError" in message
+    assert "choices" not in message.lower()

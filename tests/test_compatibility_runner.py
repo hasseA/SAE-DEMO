@@ -28,8 +28,11 @@ import pytest
 from sae_demo.compatibility_runner import (
     CompatibilityRunner,
     DEFAULT_BEHAVIORAL_USE_POLICY,
+    DEFAULT_MAX_TOKENS,
+    MAX_TOKENS_ENV_VAR,
     MemoryPayloadIntegrityError,
     NotAFrozenScenarioError,
+    resolve_max_tokens,
 )
 from sae_demo.config import NebiusConfig
 from sae_demo.nebius_provider import NebiusProvider
@@ -945,3 +948,90 @@ def test_m4b_policy_symmetry_matches_m4a_placement_and_role_shape():
     on_roles = [m["role"] for m in client_on.completions.calls[0]["messages"]]
     assert off_roles == ["system", "user"]
     assert on_roles == ["system", "system", "system", "user"]
+
+
+# -- M5G: configurable max_tokens ---------------------------------------
+#
+# `resolve_max_tokens` is the one function every caller (in particular
+# `sae_demo/web_app.py`'s single `_start_run_entry` call site, used by
+# both Memory OFF and Memory ON) reads the completion-token budget
+# from. These tests cover the function itself (default, override,
+# invalid/out-of-range fallback) and that a runner actually forwards
+# whatever value it is given to the provider on every turn.
+
+
+def test_resolve_max_tokens_default_with_no_env_var():
+    assert resolve_max_tokens(env={}) == DEFAULT_MAX_TOKENS
+
+
+def test_resolve_max_tokens_respects_valid_override():
+    assert resolve_max_tokens(env={MAX_TOKENS_ENV_VAR: "777"}) == 777
+
+
+def test_resolve_max_tokens_falls_back_on_non_integer_value():
+    assert resolve_max_tokens(env={MAX_TOKENS_ENV_VAR: "not-a-number"}) == DEFAULT_MAX_TOKENS
+
+
+def test_resolve_max_tokens_falls_back_on_too_small_value():
+    assert resolve_max_tokens(env={MAX_TOKENS_ENV_VAR: "1"}) == DEFAULT_MAX_TOKENS
+
+
+def test_resolve_max_tokens_falls_back_on_too_large_value():
+    assert resolve_max_tokens(env={MAX_TOKENS_ENV_VAR: "999999"}) == DEFAULT_MAX_TOKENS
+
+
+def test_resolve_max_tokens_falls_back_on_empty_string():
+    assert resolve_max_tokens(env={MAX_TOKENS_ENV_VAR: ""}) == DEFAULT_MAX_TOKENS
+
+
+def test_resolve_max_tokens_never_raises_on_garbage_input():
+    # Defensive: this function is never allowed to raise -- an operator
+    # typo in the environment must fall back quietly, not break every
+    # run.
+    for garbage in ("", "   ", "12.5", "-5", "0", "NaN", "🎲"):
+        assert resolve_max_tokens(env={MAX_TOKENS_ENV_VAR: garbage}) == DEFAULT_MAX_TOKENS
+
+
+def test_runner_forwards_resolved_max_tokens_to_every_provider_call():
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(provider, max_tokens=321)
+
+    runner.run(_small_scenario())
+
+    for call in fake_client.completions.calls:
+        assert call["max_tokens"] == 321
+
+
+def test_off_and_on_runners_forward_identical_max_tokens():
+    # The controlling invariant this stage must not weaken: Memory OFF
+    # and Memory ON must use the exact same max_tokens value. This
+    # mirrors `resolve_max_tokens()` being called once per run and the
+    # result passed unconditionally to `CompatibilityRunner` in
+    # `sae_demo/web_app.py`'s `_start_run_entry` -- simulated here at
+    # the runner level with two independently constructed runners given
+    # the same resolved value.
+    resolved = resolve_max_tokens(env={MAX_TOKENS_ENV_VAR: "555"})
+
+    responses_off = [_FakeResponse(_FakeMessage(f"Off {i}")) for i in range(3)]
+    provider_off, client_off = _provider_with(responses_off)
+    runner_off = CompatibilityRunner(provider_off, max_tokens=resolved)
+    runner_off.run(_small_scenario())
+
+    responses_on = [_FakeResponse(_FakeMessage(f"On {i}")) for i in range(3)]
+    provider_on, client_on = _provider_with(responses_on)
+    runner_on = CompatibilityRunner(
+        provider_on,
+        max_tokens=resolved,
+        memory_payload=_FAKE_NETWORK_LIKE_PAYLOAD,
+        memory_payload_sha256=hashlib.sha256(
+            _FAKE_NETWORK_LIKE_PAYLOAD.encode("utf-8")
+        ).hexdigest(),
+    )
+    runner_on.run(_small_scenario())
+
+    off_values = {call["max_tokens"] for call in client_off.completions.calls}
+    on_values = {call["max_tokens"] for call in client_on.completions.calls}
+    assert off_values == {555}
+    assert on_values == {555}
+    assert off_values == on_values

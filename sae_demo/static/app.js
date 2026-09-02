@@ -27,6 +27,15 @@
 // the seven-section result back, review/edit it, then freeze it. A
 // frozen custom scenario runs through the exact same
 // `startRunForScenario`/comparison flow as a built-in one.
+//
+// M5G: hardening only. A visible "Waiting for model..." state (plus a
+// disabled-button guard against a duplicate in-flight request) is
+// shown while `advanceSegment` is waiting on a real provider call --
+// the only action in this page that actually calls a provider. The
+// two comparison columns get a purely visual OFF/ON accent. No new
+// endpoint or automated judgment of either response is added --
+// assistant/segment text is still always set via `.textContent`, never
+// rendered as HTML or Markdown.
 
 let currentRunId = null;
 let scenariosById = {};
@@ -284,6 +293,9 @@ function renderRunState(run) {
 async function startRunForScenario(scenarioId, triggerBtn) {
   clearScenarioError();
   if (triggerBtn) {
+    if (triggerBtn.disabled) {
+      return;
+    }
     triggerBtn.disabled = true;
   }
 
@@ -332,13 +344,23 @@ function startWizardScenario() {
   return startRunForScenario(wizardRunnableScenarioId, startBtn);
 }
 
+// M5G: `next-segment-btn` is disabled for the whole request (blocking
+// both a rapid double-click and a keyboard-triggered repeat while a
+// real provider call is in flight) and re-enabled only in `finally`,
+// so it comes back whether the call succeeds, fails, or throws --
+// never left stuck disabled, and never re-enabled early while a
+// request is still outstanding. The visible "Waiting for model..."
+// text is the same disabled window made visible, so a real (slow)
+// provider call reads as "in progress," not as a stuck or broken page.
 async function advanceSegment() {
   const nextBtn = document.getElementById("next-segment-btn");
+  const waitingText = document.getElementById("run-waiting-text");
   clearScenarioError();
-  if (!currentRunId) {
+  if (!currentRunId || nextBtn.disabled) {
     return;
   }
   nextBtn.disabled = true;
+  waitingText.hidden = false;
 
   try {
     const response = await fetch("/api/runs/" + currentRunId + "/advance", {
@@ -358,6 +380,7 @@ async function advanceSegment() {
     showScenarioError("Unable to reach the backend right now. Please try again.");
   } finally {
     nextBtn.disabled = false;
+    waitingText.hidden = true;
   }
 }
 
@@ -373,7 +396,7 @@ function showCompareButton(currentMode) {
 async function compareAlternate() {
   const btn = document.getElementById("compare-alternate-btn");
   clearScenarioError();
-  if (!currentRunId) {
+  if (!currentRunId || btn.disabled) {
     return;
   }
   btn.disabled = true;
@@ -414,9 +437,13 @@ function showComparisonStatusNote(message) {
   document.getElementById("comparison-panel").hidden = false;
 }
 
-function renderComparisonColumn(label, text) {
+// M5G: `modifierClass` gives the OFF and ON columns a distinct, purely
+// visual accent (see `.comparison-column-off` / `.comparison-column-on`
+// in styles.css) so the two conditions are easier to tell apart at a
+// glance -- it carries no meaning about which response is preferable.
+function renderComparisonColumn(label, text, modifierClass) {
   const column = document.createElement("div");
-  column.className = "comparison-column";
+  column.className = "comparison-column " + modifierClass;
 
   const labelP = document.createElement("p");
   labelP.className = "turn-speaker";
@@ -445,8 +472,12 @@ function renderComparisonSegment(segment) {
 
   const columns = document.createElement("div");
   columns.className = "comparison-columns";
-  columns.appendChild(renderComparisonColumn("Memory OFF", segment.off_assistant_text));
-  columns.appendChild(renderComparisonColumn("Memory ON", segment.on_assistant_text));
+  columns.appendChild(
+    renderComparisonColumn("Memory OFF", segment.off_assistant_text, "comparison-column-off")
+  );
+  columns.appendChild(
+    renderComparisonColumn("Memory ON", segment.on_assistant_text, "comparison-column-on")
+  );
 
   wrapper.appendChild(roleP);
   wrapper.appendChild(textP);
@@ -506,6 +537,7 @@ function resetRunView() {
   document.getElementById("conversation").innerHTML = "";
   document.getElementById("completed-message").hidden = true;
   document.getElementById("current-segment-card").hidden = true;
+  document.getElementById("run-waiting-text").hidden = true;
   document.getElementById("run-error").hidden = true;
   document.getElementById("compare-alternate-btn").hidden = true;
   document.getElementById("start-another-btn").hidden = true;

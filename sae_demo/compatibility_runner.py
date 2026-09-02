@@ -68,8 +68,9 @@ logic in this project.
 from __future__ import annotations
 
 import hashlib
+import os
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Mapping, Optional, Tuple
 
 from .nebius_provider import NebiusProvider, NebiusProviderError
 from .scenario import MODE_FROZEN, Scenario
@@ -133,7 +134,76 @@ DEFAULT_BEHAVIORAL_USE_POLICY = (
     "details of its own unless the user explicitly asks about it."
 )
 
-DEFAULT_MAX_TOKENS = 200
+DEFAULT_MAX_TOKENS = 400
+
+# M5G: configurable via environment, so the completion-token budget is
+# one operator-tunable value instead of a constant hard-coded in
+# multiple places. `resolve_max_tokens()` is the single place this
+# value is ever read at request time; `sae_demo/web_app.py` calls it
+# once per run construction (`_start_run_entry`) and passes the exact
+# same result to both a Memory OFF run and a Memory ON run -- there is
+# no code path that gives one condition a different budget than the
+# other, which is the controlling invariant recorded in
+# `docs/decisions/SAE_DEMO_M4_CONSUMPTION_BOUNDARY_FREEZE.md` (Section
+# 7: `max_tokens` held identical between conditions). Changing this
+# value changes both conditions' budget together, never one alone.
+#
+# M5G raised the default from 200 to 400. Rationale: 200 completion
+# tokens (roughly 130-150 English words) repeatedly proved too small
+# for a natural multi-sentence reflective reply to a scenario segment,
+# causing live Nemotron responses to end mid-sentence -- a display/
+# readability problem, not a scientific one, but one that undermines a
+# hackathon demo's first impression. Doubling the budget is the
+# smallest change that gives a completion realistic room to reach a
+# sentence boundary without materially changing latency/cost or
+# altering anything about scenario content, memory placement, or the
+# behavioral-use policy. This is a token-budget tuning decision only;
+# it does not touch model choice, reasoning configuration, or any
+# scenario/memory content.
+MAX_TOKENS_ENV_VAR = "SAE_DEMO_MAX_TOKENS"
+
+# Defensive bounds for an operator-supplied override: large enough to
+# comfortably fit a multi-sentence reply, small enough to keep a demo
+# run's latency/cost sane. An override outside this range, or one that
+# isn't a valid integer, is ignored in favor of `DEFAULT_MAX_TOKENS`
+# rather than silently sent to the provider as-is or allowed to break a
+# run with a confusing provider-side error.
+_MIN_MAX_TOKENS = 50
+_MAX_MAX_TOKENS = 2000
+
+
+def resolve_max_tokens(env: Optional[Mapping[str, str]] = None) -> int:
+    """Resolve the completion-token budget for one provider call.
+
+    Defaults to `DEFAULT_MAX_TOKENS`; overridable via the
+    `SAE_DEMO_MAX_TOKENS` environment variable (or an injectable `env`
+    mapping, for testing), following the same pattern as
+    `sae_demo/runtime_paths.py`'s `local_root()`. An override that
+    isn't a valid positive integer, or falls outside
+    [`_MIN_MAX_TOKENS`, `_MAX_MAX_TOKENS`], is ignored -- this function
+    never raises and never sends a nonsensical value to the provider;
+    it silently falls back to the default instead.
+
+    Deliberately stateless and side-effect-free so every caller within
+    one process resolves the exact same value from the exact same
+    environment -- this is what keeps Memory OFF and Memory ON calls
+    using an identical budget.
+    """
+
+    source = env if env is not None else os.environ
+    raw = source.get(MAX_TOKENS_ENV_VAR)
+    if not raw:
+        return DEFAULT_MAX_TOKENS
+
+    try:
+        value = int(raw)
+    except ValueError:
+        return DEFAULT_MAX_TOKENS
+
+    if value < _MIN_MAX_TOKENS or value > _MAX_MAX_TOKENS:
+        return DEFAULT_MAX_TOKENS
+
+    return value
 
 
 class CompatibilityRunnerError(RuntimeError):

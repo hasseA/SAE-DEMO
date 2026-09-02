@@ -9,6 +9,12 @@ change could silently start returning reasoning again.
 
 Never logs or includes the API key or any raw exception text (which
 could contain request headers) in error messages.
+
+M5G: a response that comes back HTTP-successful but structurally
+unexpected (missing/empty ``choices``, a ``message`` without the
+attributes this adapter expects) is treated the same as a failed
+request -- a safe ``NebiusProviderError`` naming only the exception's
+class, never an unhandled exception with a raw traceback.
 """
 
 from __future__ import annotations
@@ -84,9 +90,27 @@ class NebiusProvider:
                 f"Nebius request failed: {exc.__class__.__name__}"
             ) from None
 
-        choice = response.choices[0]
-        message = choice.message
-        reasoning = getattr(message, "reasoning", None)
+        # M5G: a malformed/unexpected response shape (an empty
+        # `choices` list, a `message` missing entirely, etc.) is
+        # treated the same as a failed request -- a safe
+        # `NebiusProviderError`, never an unhandled exception. Without
+        # this, a surprising but "successful" HTTP response could raise
+        # a bare `IndexError`/`AttributeError` here, outside every
+        # caller's `except NebiusProviderError` handling (see
+        # `CompatibilityRunner.send_turn`), which would otherwise
+        # surface as an unhandled 500 instead of the same clean,
+        # per-turn error every other provider failure already gets.
+        try:
+            choice = response.choices[0]
+            message = choice.message
+            reasoning = getattr(message, "reasoning", None)
+            content = message.content
+            finish_reason = choice.finish_reason
+            completion_tokens = getattr(response.usage, "completion_tokens", None)
+        except Exception as exc:  # noqa: BLE001 - intentionally broad, re-raised safely
+            raise NebiusProviderError(
+                f"Nebius response was malformed: {exc.__class__.__name__}"
+            ) from None
 
         reasoning_warning = reasoning is not None
         if reasoning_warning:
@@ -97,9 +121,9 @@ class NebiusProvider:
             )
 
         return NebiusCompletionResult(
-            content=message.content,
+            content=content,
             reasoning=reasoning,
-            finish_reason=choice.finish_reason,
-            completion_tokens=getattr(response.usage, "completion_tokens", None),
+            finish_reason=finish_reason,
+            completion_tokens=completion_tokens,
             reasoning_warning=reasoning_warning,
         )

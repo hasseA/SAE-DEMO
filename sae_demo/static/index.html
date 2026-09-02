@@ -17,6 +17,18 @@
   </header>
 
   <main>
+    <section id="how-to-try" class="status-card" aria-label="How to try it">
+      <h2>How to try it (about 2&ndash;3 minutes)</h2>
+      <ol class="how-to-steps">
+        <li>Pick a built-in scenario below, or choose &ldquo;Create your own.&rdquo;</li>
+        <li>Choose Memory OFF or Memory ON.</li>
+        <li>Start the scenario and step through it with Next Segment.</li>
+        <li>Once it completes, run the alternate condition to build a comparison.</li>
+        <li>Read the two transcripts side by side once both finish.</li>
+        <li>Scroll down for the conceptual Emotional Memory view and the Experiment&nbsp;8 evidence card.</li>
+      </ol>
+    </section>
+
     <section id="connection-status" class="status-card">
       <h2>Backend status</h2>
       <p id="backend-status-text" class="status-text">Checking&hellip;</p>
@@ -67,6 +79,12 @@
       </div>
 
       <div id="wizard-panel" hidden aria-label="Create your own scenario">
+        <p class="status-detail">
+          This two-step handoff is deliberate scenario preparation, not a
+          missing feature: writing the story with an AI you trust, then
+          reviewing and freezing it here, is what guarantees the exact same
+          text runs in both Memory OFF and Memory ON.
+        </p>
         <p class="status-detail">
           SAE-DEMO does not send these story ingredients to an AI in this
           step. Copy the generated prompt to an AI service you choose, then
@@ -139,6 +157,10 @@
 
         <div class="wizard-step" id="wizard-step-4" hidden>
           <h3>Step 4 &mdash; Review and edit segments</h3>
+          <p class="status-detail">
+            Still scenario preparation &mdash; edit freely here. Nothing is
+            part of the controlled comparison until you freeze it in Step 5.
+          </p>
           <p id="wizard-review-status" class="status-detail"></p>
           <div id="wizard-segment-editors"></div>
           <button id="wizard-save-edits-btn" type="button">Save edits</button>
@@ -158,9 +180,9 @@
         <div class="wizard-step" id="wizard-step-6" hidden>
           <h3>Step 6 &mdash; Run the comparison</h3>
           <p class="status-detail">
-            This frozen scenario now runs through the same controlled Memory
-            OFF/ON comparison as a built-in scenario, using the Memory choice
-            above.
+            This is the controlled comparison: the frozen text will not
+            change, and it now runs through the same Memory OFF/ON flow as a
+            built-in scenario, using the Memory choice above.
           </p>
           <button id="wizard-start-run-btn" type="button">Start Scenario</button>
         </div>
@@ -182,6 +204,9 @@
           <p class="segment-role" id="current-segment-role"></p>
           <p class="segment-text" id="current-segment-text"></p>
           <button id="next-segment-btn" type="button">Next Segment</button>
+          <p id="run-waiting-text" class="status-detail status-waiting" hidden>
+            Waiting for model&hellip;
+          </p>
         </div>
 
         <div id="completed-message" hidden>
@@ -298,6 +323,15 @@
       back. Once you freeze a scenario, its exact text is what runs &mdash;
       unchanged &mdash; in both Memory OFF and Memory ON, through the same
       controlled comparison above.
+    </p>
+    <p>
+      M5G: this stage is hardening only &mdash; no new scientific claim and
+      no automated judgment of either response was added. Assistant
+      replies are shown as plain text with line breaks preserved, never
+      as rendered Markdown or raw HTML. The per-turn completion-token
+      budget is one configurable value, applied identically to Memory
+      OFF and Memory ON, raised modestly this stage to reduce responses
+      ending mid-sentence.
     </p>
   </footer>
 

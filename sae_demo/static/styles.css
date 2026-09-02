@@ -130,6 +130,19 @@ label {
   margin-bottom: 0.35rem;
 }
 
+/* -- How to try it (M5G) ----------------------------------------------- */
+
+.how-to-steps {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.how-to-steps li + li {
+  margin-top: 0.3rem;
+}
+
 #scenario-select-row {
   display: flex;
   align-items: flex-end;
@@ -168,6 +181,14 @@ label {
 .segment-text {
   margin: 0;
   white-space: pre-line;
+}
+
+/* M5G: visible "waiting for a real provider call" state -- the same
+   window `next-segment-btn` is disabled for, made visible so a slow
+   response reads as "in progress" rather than a stuck page. */
+.status-waiting {
+  margin-top: 0.5rem;
+  font-style: italic;
 }
 
 #completed-message {
@@ -302,6 +323,17 @@ label {
 
 .comparison-column .turn-speaker {
   margin-top: 0;
+}
+
+/* M5G: a purely visual left-border accent distinguishing the two
+   columns at a glance -- it does not favor or grade either response,
+   matching this page's existing comparison-neutrality invariant. */
+.comparison-column-off {
+  border-left: 3px solid var(--text-muted);
+}
+
+.comparison-column-on {
+  border-left: 3px solid var(--accent);
 }
 
 .insight-grid {
@@ -523,6 +555,16 @@ footer p + p {
 
 .wizard-segment-editor.wizard-segment-short .status-detail {
   color: var(--error);
+}
+
+/* M5G: once frozen, segment editors are disabled -- a visibly muted
+   (not merely default-gray) state makes "this is now fixed text" clear
+   at a glance, matching the freeze-immutability wording in Step 5. */
+textarea:disabled,
+input[type="text"]:disabled {
+  background: var(--bg);
+  color: var(--text-muted);
+  cursor: not-allowed;
 }
 
 @media (max-width: 560px) {
