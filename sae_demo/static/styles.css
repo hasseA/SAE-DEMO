@@ -283,29 +283,131 @@ label {
   margin-top: 0;
 }
 
-.placeholder-grid {
+.insight-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
   gap: 1rem;
+  align-items: start;
 }
 
-.placeholder-card {
+.insight-card {
   background: var(--surface);
-  border: 1px dashed var(--border);
+  border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 1rem 1.25rem;
+  padding: 1.1rem 1.25rem;
 }
 
-.placeholder-card h3 {
-  margin: 0 0 0.35rem;
+.insight-card h3 {
+  margin: 0 0 0.5rem;
   font-size: 1rem;
 }
 
-.coming-soon {
-  margin: 0;
+.insight-disclaimer,
+.insight-subtitle {
+  margin: 0 0 0.85rem;
   color: var(--text-muted);
-  font-size: 0.9rem;
-  font-style: italic;
+  font-size: 0.85rem;
+}
+
+.insight-subtitle {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* -- Conceptual Emotional Memory view (M5E) --------------------------
+   Purely illustrative/synthetic: two small labeled step sequences, no
+   graph, no fabricated numeric or telemetry values. */
+
+.concept-flow + .concept-flow {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.concept-condition-label {
+  margin: 0 0 0.5rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.concept-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.concept-step {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.4rem 0.85rem;
+  font-size: 0.85rem;
+}
+
+.concept-step:not(:last-child)::after {
+  content: "\2192";
+  margin-left: 0.5rem;
+  color: var(--text-muted);
+}
+
+.concept-step-memory {
+  border-color: var(--accent);
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.concept-tags {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.concept-note {
+  margin: 0.6rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+/* -- Experiment 8 evidence card (M5E) --------------------------------- */
+
+.evidence-sentence {
+  margin: 0 0 0.85rem;
+  font-size: 0.95rem;
+}
+
+.evidence-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.25rem;
+  margin: 0;
+}
+
+.evidence-meta-item {
+  margin: 0;
+}
+
+.evidence-meta-item dt {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.evidence-meta-item dd {
+  margin: 0.15rem 0 0;
+  font-size: 1.1rem;
+  font-weight: 600;
 }
 
 footer {
@@ -316,9 +418,24 @@ footer {
   font-size: 0.85rem;
 }
 
+footer p + p {
+  margin-top: 0.75rem;
+}
+
 @media (max-width: 560px) {
-  .placeholder-grid,
+  .insight-grid,
   .comparison-columns {
     grid-template-columns: 1fr;
+  }
+
+  .concept-step:not(:last-child)::after {
+    content: "\2193";
+    display: block;
+    margin: 0.15rem 0 0 0.4rem;
+  }
+
+  .concept-steps {
+    flex-direction: column;
+    align-items: flex-start;
   }
 }

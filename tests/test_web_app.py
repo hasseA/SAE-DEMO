@@ -298,7 +298,7 @@ def test_status_public_fields_and_no_private_data(
     body = response.json()
 
     assert body["application"] == "SAE-DEMO"
-    assert body["stage"] == "M5D"
+    assert body["stage"] == "M5E"
     assert body["backend_status"] == "ok"
     assert body["target_model"] == DEFAULT_NEBIUS_MODEL
     assert body["memory_feature_status"] == web_app.MEMORY_FEATURE_STATUS
@@ -1411,3 +1411,177 @@ def test_frontend_has_no_automated_winner_or_scoring_language(client: TestClient
         text = client.get(path).text.lower()
         for phrase in forbidden_phrases:
             assert phrase not in text
+
+
+# -- M5E: conceptual Emotional Memory view + Experiment 8 evidence card ----
+#
+# Both additions are static, public-safe UI content only. No new API
+# endpoint is added for them, no provider is constructed and no memory
+# artifact is loaded to render them, and they render identically with
+# or without a configured provider/memory artifact. These tests never
+# touch a real provider or a real Emotional Memory artifact.
+
+# The exact, frozen sentence the task approved -- must appear byte-for-
+# byte unchanged (aside from HTML entity encoding of the apostrophe-
+# free punctuation it already uses, which this sentence does not need).
+EXPERIMENT_8_SENTENCE = (
+    "A controlled nine-session, three-provider experiment found "
+    "reproducible condition-associated trajectory differences, "
+    "including a repeated early curiosity/interest divergence, while "
+    "several stronger hypotheses remained unresolved."
+)
+
+
+def _normalized_whitespace(text: str) -> str:
+    return " ".join(text.split())
+
+
+def test_conceptual_memory_section_renders(client: TestClient) -> None:
+    response = client.get("/")
+    assert "concept-heading" in response.text
+    assert "Emotional Memory" in response.text
+    assert "conceptual view" in response.text.lower()
+
+
+def test_conceptual_memory_section_labeled_illustrative(client: TestClient) -> None:
+    response = client.get("/")
+    text = response.text.lower()
+    assert "illustrative" in text
+    assert "conceptual" in text
+
+
+def test_conceptual_memory_section_disclaims_live_internal_state(client: TestClient) -> None:
+    response = client.get("/")
+    text = _normalized_whitespace(response.text).lower()
+    assert "does not display the model" in text or "not the model" in text
+    assert "live internal state" in text
+    assert "private memory-generation mechanism" in text
+
+
+def test_conceptual_memory_section_contains_no_real_memory_values(client: TestClient) -> None:
+    response = client.get("/")
+    assert MEMORY_PAYLOAD_TEXT not in response.text
+    assert DEFAULT_BEHAVIORAL_USE_POLICY not in response.text
+    assert DEFAULT_SYSTEM_MESSAGE not in response.text
+    _assert_no_forbidden_material(response.text)
+
+
+def test_conceptual_memory_section_has_no_private_identifiers(client: TestClient) -> None:
+    for path in ("/", "/static/app.js", "/static/styles.css"):
+        response = client.get(path)
+        _assert_no_forbidden_material(response.text)
+        # The generic profile/network representation vocabulary is
+        # already established elsewhere in this codebase -- the
+        # conceptual view must never introduce a private internal
+        # structural term instead of it.
+        assert "XNET" not in response.text
+        assert "XINJ" not in response.text
+
+
+def test_experiment_8_evidence_card_renders(client: TestClient) -> None:
+    response = client.get("/")
+    assert "evidence-heading" in response.text
+    assert "Experiment 8" in response.text
+
+
+def test_experiment_8_evidence_sentence_is_verbatim(client: TestClient) -> None:
+    response = client.get("/")
+    assert EXPERIMENT_8_SENTENCE in _normalized_whitespace(response.text)
+
+
+def test_experiment_8_evidence_card_shows_expected_metadata(client: TestClient) -> None:
+    response = client.get("/")
+    normalized = _normalized_whitespace(response.text)
+    assert "Providers" in normalized and "3" in normalized
+    assert "Conditions" in normalized and "3" in normalized
+    assert "Sessions" in normalized and "9" in normalized
+
+
+def test_experiment_8_evidence_card_has_no_significance_claim(client: TestClient) -> None:
+    text = client.get("/").text.lower()
+    for phrase in (
+        "statistically significant",
+        "statistical significance",
+        "significance level",
+        "p < 0.",
+        "p<0.",
+    ):
+        assert phrase not in text
+
+
+def test_experiment_8_evidence_card_has_no_proven_mechanism_claim(client: TestClient) -> None:
+    text = client.get("/").text.lower()
+    for phrase in (
+        "proven",
+        "proves",
+        "demonstrated",
+        "demonstrates",
+        "has emotions",
+        "recognition",
+        "activation",
+    ):
+        assert phrase not in text
+
+
+def test_experiment_8_evidence_card_has_no_winner_or_comparison_claim(client: TestClient) -> None:
+    text = client.get("/").text.lower()
+    for phrase in (
+        "network better",
+        "profile better",
+        "better than",
+        "worse than",
+        "outperform",
+    ):
+        assert phrase not in text
+
+
+def test_m5e_additions_do_not_remove_existing_comparison_ui(client: TestClient) -> None:
+    response = client.get("/")
+    assert 'id="comparison-panel"' in response.text
+    assert 'id="comparison-segments"' in response.text
+    assert 'id="scenario-panel"' in response.text
+    assert 'id="compare-alternate-btn"' in response.text
+
+
+def test_no_provider_call_while_serving_m5e_static_content(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _fail_if_constructed(*args, **kwargs):
+        raise AssertionError("NebiusProvider must not be constructed to serve M5E content")
+
+    monkeypatch.setattr(web_app, "NebiusProvider", _fail_if_constructed)
+
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "concept-heading" in response.text
+    assert "evidence-heading" in response.text
+
+
+def test_no_memory_artifact_access_while_serving_m5e_static_content(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("load_opaque_memory_artifact must not be called to serve M5E content")
+
+    monkeypatch.setattr(web_app, "load_opaque_memory_artifact", _fail_if_called)
+
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "concept-heading" in response.text
+    assert "evidence-heading" in response.text
+
+
+def test_m5e_static_content_renders_with_no_api_key_configured(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("NEBIUS_API_KEY", raising=False)
+
+    response = client.get("/")
+    assert response.status_code == 200
+    assert "concept-heading" in response.text
+    assert "evidence-heading" in response.text
+    assert EXPERIMENT_8_SENTENCE in _normalized_whitespace(response.text)
+
+    status = client.get("/api/status").json()
+    assert status["provider_configured"] is False
+    assert status["stage"] == "M5E"

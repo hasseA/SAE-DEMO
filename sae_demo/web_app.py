@@ -1,4 +1,4 @@
-"""Minimal FastAPI web shell for SAE-DEMO (M5A, extended M5B/M5C/M5D).
+"""Minimal FastAPI web shell for SAE-DEMO (M5A, extended M5B/M5C/M5D/M5E).
 
 This module serves the static frontend and exposes a small, typed
 API. M5A added a health/status API only. M5B wired the existing,
@@ -11,7 +11,13 @@ under either Memory OFF or Memory ON. M5D adds a *controlled*
 comparison: once a run completes, its opposite-memory-mode condition
 can be replayed as a completely fresh run of the *same* scenario, and
 once both runs are complete, their transcripts can be viewed side by
-side, aligned by segment.
+side, aligned by segment. M5E adds no backend behavior at all: it is a
+static, public-safe conceptual Emotional Memory diagram and a
+conservative Experiment 8 evidence card, both served as plain HTML/CSS
+content in ``static/index.html`` -- this module does not construct a
+provider or load a memory artifact to render them, and they render
+identically whether or not a provider or memory artifact is
+configured.
 
 M5C/M5D deliberately do not implement a second copy of memory-
 placement or behavioral-policy semantics: every run drives
@@ -90,7 +96,7 @@ from tests.fixtures.synthetic_scenarios import (
 )
 
 APP_NAME = "SAE-DEMO"
-STAGE_LABEL = "M5D"
+STAGE_LABEL = "M5E"
 MEMORY_FEATURE_STATUS = "active in M5C (one configured artifact, Memory ON/OFF)"
 SCENARIO_FEATURE_STATUS = "active in M5D (real provider responses, controlled comparison)"
 
