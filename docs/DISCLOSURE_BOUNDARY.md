@@ -1,6 +1,6 @@
 # SAE-DEMO Disclosure Boundary (operational summary)
 
-This is a short, independent operational summary for developers working in this repository. The controlling document is the private SAE repository's `docs/decisions/SAE_HACKATHON_IP_DISCLOSURE_BOUNDARY.md` (commit `b313148acd25d96b0bcba48de54b983720a20438`), which is not reproduced here and is not part of this repository. If this summary and that document ever appear to conflict, treat the private document as authoritative and raise the discrepancy before proceeding — do not resolve it by editing this file to match your best guess.
+This is a short, independent operational summary for developers working in this repository. The controlling documents are the private SAE repository's `docs/decisions/SAE_HACKATHON_IP_DISCLOSURE_BOUNDARY.md` (M2) and `docs/decisions/SAE_HACKATHON_PROFILE_MEMORY_DISCLOSURE_DECISION.md` (M2.1, which narrowly supersedes specific M2 clauses for one named, validated artifact only), neither of which is reproduced here and neither of which is part of this repository. If this summary and those documents ever appear to conflict, treat the private documents as authoritative and raise the discrepancy before proceeding — do not resolve it by editing this file to match your best guess.
 
 ## The one rule
 
@@ -9,8 +9,8 @@ This repository is built independently. Nothing is copied, ported, translated, o
 ## Never enters this repository
 
 - SAE source code of any kind (Python modules, prompt strings, validation logic, schemas)
-- The private XNET or XINJ schema, structure, or field layout
-- Any actual XNET or XINJ payload, in whole or in part
+- The private XNET or XINJ schema, structure, or field layout — except as embodied in the one specific approved profile Emotional Memory artifact described under "Profile Emotional Memory release status" below
+- Any actual XNET or XINJ payload, in whole or in part — except that one specific, named, already-validated profile Emotional Memory export (see below); this does not extend to any other artifact, including the network-representation export
 - Source emotional conversations or any transcript from which Emotional Memory was derived
 - Private poem/lyric material
 - Full Experiment 8 transcripts
@@ -28,6 +28,15 @@ This repository is built independently. Nothing is copied, ported, translated, o
 - Independently authored, conceptual descriptions of Emotional Memory, Recognition, and Activation, clearly distinguishing what has been demonstrated from what is a proposed future direction
 - Illustrative, synthetic-data visualizations of the Emotional Memory concept and of proposed recognition/activation behavior, the latter always labeled "Prototype / Conceptual"
 - A consumer for one bounded, externally-supplied Emotional Memory export, treated as an opaque input whose internal format this project does not need to know or replicate from the private schema
+- The one specific, already-validated profile-representation Emotional Memory artifact named under "Profile Emotional Memory release status" below, including its existing weights, meanings, classifications, schema/field names, wrapper, and consumption framing, exactly as approved by the private repository's M2.1 decision
+
+## Profile Emotional Memory release status (M2.1)
+
+The private repository's M2.1 decision (`docs/decisions/SAE_HACKATHON_PROFILE_MEMORY_DISCLOSURE_DECISION.md`) approved, in principle, the public distribution of one specific, already-validated Emotional Memory export: the profile-representation artifact identified there by its envelope `content_sha256` (`ad659ae31004d3f54c0d96fbcb74f374d5674b75f37ff6ff0c3dacf545a9c1e2`). That approval covers the artifact's existing content, weights, meanings, classifications, schema/field names, wrapper, and consumption framing exactly as they already exist — this repository must not sanitize, rename, rewrite, summarize, or otherwise transform that artifact before or as part of distributing it.
+
+The corresponding network-representation artifact (`content_sha256` `0ede24bf907b6c409751ff8cc4df4ed6e0888563b9ef80fae19841722d51f330`) is explicitly **not** covered by this approval and remains local-only/private under the rule below, pending a separate decision.
+
+This status change affects only which artifact may be distributed and how it may be described. It does not change anything about how this repository's code treats a memory artifact (still loaded and forwarded as an opaque string — see `sae_demo/memory_loader.py`), and it does not disclose, and must never be used to justify disclosing, how SAE creates, extracts, derives, weights, or freezes an Emotional Memory. That creation methodology remains private without qualification.
 
 ## Runtime data (M3C.1)
 

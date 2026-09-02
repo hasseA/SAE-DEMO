@@ -39,7 +39,7 @@ As of M3D, `.local/memory/` may legitimately contain one or more opaque memory-a
 
 ## On the bounded Emotional Memory artifact
 
-A bounded Emotional Memory artifact is **local-only by default**. That is not a permanent prohibition on ever sharing it: it may become publishable only after a separate, explicit disclosure review and approval — the same kind of deliberate decision this project has applied to every other private/public boundary question so far. This document does not define, and this repository never tracks, any such artifact's format details, contents, or provenance beyond the generic envelope shape described above; `.local/memory/` is simply where it lives locally, gitignored, when and if it exists.
+A bounded Emotional Memory artifact is **local-only by default**. That is not a permanent prohibition on ever sharing it: it may become publishable only after a separate, explicit disclosure review and approval — the same kind of deliberate decision this project has applied to every other private/public boundary question so far. This document does not define, and this repository never tracks, any such artifact's format details, contents, or provenance beyond the generic envelope shape described above; `.local/memory/` is simply where it lives locally, gitignored, when and if it exists. That review and approval has now occurred for one specific, named profile-representation artifact (see `docs/DISCLOSURE_BOUNDARY.md`, "Profile Emotional Memory release status", and the private repository's M2.1 decision); it has not occurred for the network-representation artifact or for any other artifact, which remain local-only under this rule.
 
 ## Compatibility-runner persistence policy
 
