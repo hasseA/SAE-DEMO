@@ -17,7 +17,18 @@ conservative Experiment 8 evidence card, both served as plain HTML/CSS
 content in ``static/index.html`` -- this module does not construct a
 provider or load a memory artifact to render them, and they render
 identically whether or not a provider or memory artifact is
-configured.
+configured. M5F adds a "Scenario Wizard" / Bring Your Own Story
+workflow (see ``sae_demo/custom_scenario.py``): a user supplies plain-
+language story ingredients, gets back a locally-generated copyable
+prompt for an AI *they* choose (SAE-DEMO never calls one), pastes the
+resulting seven-section story back, reviews/edits it, and explicitly
+freezes it. A frozen custom scenario is resolved by
+``_start_run_entry`` exactly like a built-in one -- see
+``_resolve_scenario`` -- so it runs through the *same*, unmodified
+controlled Memory OFF/ON comparison machinery M5D already built; no
+second run/comparison engine exists for custom scenarios. Custom
+scenario drafts are process-local and in-memory only, exactly like
+runs and comparisons -- never written to disk, cleared on restart.
 
 M5C/M5D deliberately do not implement a second copy of memory-
 placement or behavioral-policy semantics: every run drives
@@ -70,7 +81,7 @@ from typing import Callable, Dict, List, Literal, Optional, Tuple
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .compatibility_runner import (
     DEFAULT_BEHAVIORAL_USE_POLICY,
@@ -82,7 +93,18 @@ from .compatibility_runner import (
 from .config import DEFAULT_NEBIUS_MODEL, MissingNebiusAPIKeyError, load_nebius_config
 from .memory_loader import MemoryArtifactError, load_opaque_memory_artifact
 from .nebius_provider import NebiusProvider
-from .scenario import MODE_FROZEN, Scenario
+
+# M5F: local, deterministic prompt generation + paste-format parsing +
+# process-local draft/freeze support for custom scenarios. See that
+# module's docstring -- it never calls a provider or the network, and
+# never touches Emotional Memory. `custom_scenario` (the module) is
+# used qualified below for everything except `CustomScenarioDraft`
+# (used as a registry value type) and `parse_pasted_scenario` (used
+# directly in the create-draft route).
+from . import custom_scenario
+from .custom_scenario import CustomScenarioDraft, parse_pasted_scenario
+from .scenario import MODE_FROZEN, VALID_SEMANTIC_ROLES, Scenario
+from .scenario import role_label as _role_label
 from .scenario_engine import NoMoreSegmentsError, ScenarioEngine, SentSegmentRecord
 
 # Reuses the same clean-room synthetic fixture builders already used by
@@ -96,9 +118,9 @@ from tests.fixtures.synthetic_scenarios import (
 )
 
 APP_NAME = "SAE-DEMO"
-STAGE_LABEL = "M5E"
+STAGE_LABEL = "M5F"
 MEMORY_FEATURE_STATUS = "active in M5C (one configured artifact, Memory ON/OFF)"
-SCENARIO_FEATURE_STATUS = "active in M5D (real provider responses, controlled comparison)"
+SCENARIO_FEATURE_STATUS = "active in M5F (built-in fixtures plus frozen custom scenarios)"
 
 # Never a hardcoded path or filename -- an operator points this at a
 # local, gitignored artifact under .local/memory/ themselves, exactly
@@ -131,22 +153,10 @@ BUILTIN_SCENARIOS: Dict[str, Callable[..., Scenario]] = {
     "new_studio": build_benign_transition_fixture,
 }
 
-# Generic, public-safe human-readable labels for the existing semantic
-# role keys (sae_demo.scenario.VALID_SEMANTIC_ROLES). Describes story
-# function only -- not private SAE memory structure.
-ROLE_LABELS: Dict[str, str] = {
-    "background_attachment": "Background & attachment",
-    "residual_possibility": "Remaining possibility",
-    "irreversibility": "Irreversible change",
-    "neutral_event": "Neutral event",
-    "meaning": "Meaning",
-    "relational_pressure": "Relational pressure",
-    "closure": "Closure",
-}
-
-
-def _role_label(role: str) -> str:
-    return ROLE_LABELS.get(role, role)
+CUSTOM_SCENARIO_NOT_FOUND_MESSAGE = "Unknown custom scenario."
+CUSTOM_SCENARIO_FROZEN_MESSAGE = "This custom scenario is frozen and can no longer be edited."
+CUSTOM_SCENARIO_NOT_FROZEN_MESSAGE = "This custom scenario must be frozen before it can be run."
+CUSTOM_SCENARIO_INVALID_MESSAGE = "The pasted scenario did not pass validation. See issues below."
 
 
 class HealthResponse(BaseModel):
@@ -300,6 +310,88 @@ class ComparisonState(BaseModel):
     segments: List[ComparisonSegmentView] = []
 
 
+# -- M5F: Scenario Wizard / Bring Your Own Story -----------------------------
+
+
+class WizardIngredientsRequest(BaseModel):
+    """Plain-language story ingredients from the wizard's ingredient form.
+
+    Deliberately does not include a target-emotion field of any kind
+    -- see ``custom_scenario.INGREDIENT_PROMPTS`` for the exact
+    questions this mirrors. Every required field must be non-empty;
+    ``tone_notes`` is the one optional field.
+    """
+
+    protagonist: str = Field(..., min_length=1)
+    long_standing_matter: str = Field(..., min_length=1)
+    open_possibility: str = Field(..., min_length=1)
+    irreversible_change: str = Field(..., min_length=1)
+    neutral_event: str = Field(..., min_length=1)
+    meaning: str = Field(..., min_length=1)
+    relational_pressure: str = Field(..., min_length=1)
+    closure: str = Field(..., min_length=1)
+    tone_notes: str = ""
+
+
+class WizardPromptResponse(BaseModel):
+    """A single, locally generated, copyable AI-prompt string.
+
+    Nothing else -- no request id, no server-side record of the
+    ingredients is kept; generating this prompt makes no network call
+    and stores nothing in any registry.
+    """
+
+    prompt: str
+
+
+class ValidationIssueView(BaseModel):
+    code: str
+    message: str
+
+
+class CustomScenarioSegmentView(BaseModel):
+    role: str
+    role_label: str
+    text: str
+
+
+class CreateCustomScenarioRequest(BaseModel):
+    """The user's pasted seven-section story, plus an optional title."""
+
+    pasted_text: str = Field(..., min_length=1)
+    title: str = ""
+
+
+class UpdateCustomScenarioSegmentsRequest(BaseModel):
+    """A partial edit: only the roles present in ``segments`` change."""
+
+    segments: Dict[str, str] = {}
+    title: Optional[str] = None
+
+
+class CustomScenarioState(BaseModel):
+    """Public-safe state of one process-local custom scenario draft.
+
+    Never includes anything beyond what the user themselves supplied
+    via paste or edit -- no private SAE data, no memory payload, no
+    provider detail. ``segments`` is always all seven roles, in
+    ``ROLE_ORDER``, with whatever text the draft currently holds
+    (empty string for a role not yet filled in, which should not
+    happen given `parse_pasted_scenario`'s all-or-nothing validation,
+    but is handled the same safe way regardless). ``runnable_scenario_id``
+    is set only once ``frozen`` is true -- the exact id
+    ``POST /api/runs`` accepts to run this scenario.
+    """
+
+    custom_scenario_id: str
+    title: str
+    frozen: bool
+    valid: bool
+    issues: List[ValidationIssueView] = []
+    segments: List[CustomScenarioSegmentView] = []
+    runnable_scenario_id: Optional[str] = None
+
+
 @dataclass
 class _RunEntry:
     engine: ScenarioEngine
@@ -341,6 +433,11 @@ class _ComparisonEntry:
 # explicitly out of scope.
 _RUN_REGISTRY: Dict[str, _RunEntry] = {}
 _COMPARISON_REGISTRY: Dict[str, _ComparisonEntry] = {}
+# M5F: process-local custom scenario drafts, keyed by their own
+# (unprefixed) draft id -- see `custom_scenario.CustomScenarioDraft`.
+# Governed by the exact same lock and the exact same "no database, no
+# disk, cleared on restart" invariant as the two registries above.
+_CUSTOM_SCENARIO_REGISTRY: Dict[str, CustomScenarioDraft] = {}
 _REGISTRY_LOCK = threading.Lock()
 
 
@@ -414,6 +511,57 @@ def _run_state(run_id: str, entry: _RunEntry) -> RunState:
     )
 
 
+def _custom_scenario_state(draft: CustomScenarioDraft) -> CustomScenarioState:
+    report = custom_scenario.validate_segments(draft.segments_by_role)
+    return CustomScenarioState(
+        custom_scenario_id=draft.custom_scenario_id,
+        title=draft.title,
+        frozen=draft.frozen,
+        valid=report.is_valid,
+        issues=[ValidationIssueView(code=issue.code, message=issue.message) for issue in report.issues],
+        segments=[
+            CustomScenarioSegmentView(role=role, role_label=_role_label(role), text=text)
+            for role, text in draft.segments_in_order()
+        ],
+        runnable_scenario_id=draft.public_scenario_id if draft.frozen else None,
+    )
+
+
+def _resolve_scenario(scenario_id: str) -> Scenario:
+    """Resolve a public scenario id to a `Scenario` -- built-in or custom.
+
+    Built-in ids are checked first, exactly as before M5F
+    (`BUILTIN_SCENARIOS`, unchanged). A custom scenario id (see
+    `custom_scenario.CUSTOM_SCENARIO_ID_PREFIX`,
+    `CustomScenarioDraft.public_scenario_id`) is resolved against the
+    process-local `_CUSTOM_SCENARIO_REGISTRY`: it must exist and be
+    frozen. An unfrozen draft is a 409 (a recognizable, in-progress
+    scenario that simply isn't ready to run yet), kept distinct from
+    the 404 an unknown id gets, so the frontend can tell the two
+    apart. This is the *only* place scenario lookup happens for a run
+    -- both a fresh `POST /api/runs` and M5D's
+    `POST /api/runs/{run_id}/alternate` resolve a custom scenario
+    exactly the same way a built-in one is resolved, through this one
+    function, so there is no second run/comparison code path for
+    custom scenarios.
+    """
+
+    build_fixture = BUILTIN_SCENARIOS.get(scenario_id)
+    if build_fixture is not None:
+        return build_fixture(mode=MODE_FROZEN)
+
+    custom_id = custom_scenario.parse_public_scenario_id(scenario_id)
+    if custom_id is not None:
+        draft = _CUSTOM_SCENARIO_REGISTRY.get(custom_id)
+        if draft is None:
+            raise HTTPException(status_code=404, detail="Unknown scenario.")
+        if not draft.frozen:
+            raise HTTPException(status_code=409, detail=CUSTOM_SCENARIO_NOT_FROZEN_MESSAGE)
+        return custom_scenario.to_scenario(draft)
+
+    raise HTTPException(status_code=404, detail="Unknown scenario.")
+
+
 def _resolve_memory_payload():
     """Load the one configured Memory ON artifact, opaquely.
 
@@ -465,13 +613,12 @@ def _start_run_entry(scenario_id: str, memory_mode: str) -> Tuple[str, _RunEntry
     and `history` -- it never reads or reuses another run's state.
 
     Raises `HTTPException` exactly as `POST /api/runs` already did:
-    404 for an unknown scenario, 503 for a missing/broken provider or
-    (Memory ON only) memory configuration.
+    404 for an unknown scenario, 409 for a custom scenario that exists
+    but is not yet frozen (see `_resolve_scenario`), 503 for a
+    missing/broken provider or (Memory ON only) memory configuration.
     """
 
-    build_fixture = BUILTIN_SCENARIOS.get(scenario_id)
-    if build_fixture is None:
-        raise HTTPException(status_code=404, detail="Unknown scenario.")
+    scenario = _resolve_scenario(scenario_id)
 
     # Checked for both Memory OFF and Memory ON -- advancing either
     # condition requires a configured provider, so this is verified
@@ -485,7 +632,6 @@ def _start_run_entry(scenario_id: str, memory_mode: str) -> Tuple[str, _RunEntry
         memory_payload = artifact.payload
         memory_payload_sha256 = artifact.content_sha256
 
-    scenario = build_fixture(mode=MODE_FROZEN)
     engine = ScenarioEngine(scenario)
 
     runner = CompatibilityRunner(
@@ -615,6 +761,125 @@ def list_scenarios() -> List[ScenarioSummary]:
             )
         )
     return summaries
+
+
+# -- M5F: Scenario Wizard / Bring Your Own Story -----------------------------
+
+
+@app.post("/api/scenario-wizard/prompt", response_model=WizardPromptResponse)
+def generate_wizard_prompt(payload: WizardIngredientsRequest) -> WizardPromptResponse:
+    """Locally generate one copyable AI prompt from plain-language ingredients.
+
+    No provider is constructed and no network call is made here -- the
+    ingredients are used only to build the returned prompt string, and
+    nothing about this request is stored in any registry. The user
+    copies the returned prompt to an AI service of their own choosing;
+    SAE-DEMO never sends the ingredients or the prompt anywhere itself.
+    """
+
+    prompt = custom_scenario.generate_prompt(payload.model_dump())
+    return WizardPromptResponse(prompt=prompt)
+
+
+@app.post("/api/custom-scenarios", response_model=CustomScenarioState, status_code=201)
+def create_custom_scenario(payload: CreateCustomScenarioRequest) -> CustomScenarioState:
+    """Parse a pasted seven-section story into a new, unfrozen draft.
+
+    Merges Part C (parse/validate) and the draft-creation step into
+    one call: an invalid paste creates nothing and returns a 422 with
+    the full validation report so the user can fix and resubmit the
+    pasted text; only a fully valid seven-section paste creates a
+    draft. No provider is constructed and no memory artifact is
+    touched to do this.
+    """
+
+    result = parse_pasted_scenario(payload.pasted_text)
+    if not result.is_valid:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": CUSTOM_SCENARIO_INVALID_MESSAGE,
+                "issues": [
+                    {"code": issue.code, "message": issue.message} for issue in result.report.issues
+                ],
+            },
+        )
+
+    draft = custom_scenario.new_draft(result.segments_by_role, title=payload.title)
+    with _REGISTRY_LOCK:
+        _CUSTOM_SCENARIO_REGISTRY[draft.custom_scenario_id] = draft
+
+    return _custom_scenario_state(draft)
+
+
+@app.get("/api/custom-scenarios/{custom_scenario_id}", response_model=CustomScenarioState)
+def get_custom_scenario(custom_scenario_id: str) -> CustomScenarioState:
+    draft = _CUSTOM_SCENARIO_REGISTRY.get(custom_scenario_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail=CUSTOM_SCENARIO_NOT_FOUND_MESSAGE)
+    return _custom_scenario_state(draft)
+
+
+@app.patch("/api/custom-scenarios/{custom_scenario_id}", response_model=CustomScenarioState)
+def update_custom_scenario(
+    custom_scenario_id: str, payload: UpdateCustomScenarioSegmentsRequest
+) -> CustomScenarioState:
+    """Edit one or more segments (and/or the title) of an unfrozen draft.
+
+    Refuses (409) once the draft is frozen -- "once frozen for a
+    controlled comparison, the scenario becomes immutable" -- rather
+    than silently accepting or ignoring the edit.
+    """
+
+    with _REGISTRY_LOCK:
+        draft = _CUSTOM_SCENARIO_REGISTRY.get(custom_scenario_id)
+        if draft is None:
+            raise HTTPException(status_code=404, detail=CUSTOM_SCENARIO_NOT_FOUND_MESSAGE)
+        if draft.frozen:
+            raise HTTPException(status_code=409, detail=CUSTOM_SCENARIO_FROZEN_MESSAGE)
+
+        for role, text in payload.segments.items():
+            if role not in VALID_SEMANTIC_ROLES:
+                raise HTTPException(status_code=422, detail=f"Unknown semantic role '{role}'.")
+            draft.segments_by_role[role] = text
+
+        if payload.title is not None:
+            draft.title = payload.title.strip() or custom_scenario.DEFAULT_DRAFT_TITLE
+
+        return _custom_scenario_state(draft)
+
+
+@app.post("/api/custom-scenarios/{custom_scenario_id}/freeze", response_model=CustomScenarioState)
+def freeze_custom_scenario(custom_scenario_id: str) -> CustomScenarioState:
+    """Validate and freeze a draft so it can be run.
+
+    Refuses (409) if already frozen. Otherwise validates all seven
+    segments; on success the draft becomes immutable and its
+    ``runnable_scenario_id`` becomes available to ``POST /api/runs``,
+    exactly like a built-in scenario id. On failure, returns 422 with
+    the validation report and leaves the draft unfrozen and editable.
+    """
+
+    with _REGISTRY_LOCK:
+        draft = _CUSTOM_SCENARIO_REGISTRY.get(custom_scenario_id)
+        if draft is None:
+            raise HTTPException(status_code=404, detail=CUSTOM_SCENARIO_NOT_FOUND_MESSAGE)
+        if draft.frozen:
+            raise HTTPException(status_code=409, detail=CUSTOM_SCENARIO_FROZEN_MESSAGE)
+
+        report = custom_scenario.freeze_draft(draft)
+        if not report.is_valid:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": CUSTOM_SCENARIO_INVALID_MESSAGE,
+                    "issues": [
+                        {"code": issue.code, "message": issue.message} for issue in report.issues
+                    ],
+                },
+            )
+
+        return _custom_scenario_state(draft)
 
 
 @app.post("/api/runs", response_model=RunState, status_code=201)

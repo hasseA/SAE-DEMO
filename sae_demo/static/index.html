@@ -26,6 +26,18 @@
     <section id="scenario-panel" class="status-card">
       <h2>Scenario</h2>
 
+      <fieldset id="scenario-source-fieldset">
+        <legend>Scenario source</legend>
+        <label class="radio-option">
+          <input type="radio" name="scenario-source" value="builtin" checked />
+          Built-in scenario
+        </label>
+        <label class="radio-option">
+          <input type="radio" name="scenario-source" value="custom" />
+          Create your own
+        </label>
+      </fieldset>
+
       <fieldset id="memory-mode-fieldset">
         <legend>Memory</legend>
         <label class="radio-option">
@@ -43,14 +55,124 @@
         </p>
       </fieldset>
 
-      <div id="scenario-select-row">
-        <label for="scenario-select">Choose a scenario</label>
-        <select id="scenario-select" disabled>
-          <option>Loading&hellip;</option>
-        </select>
-        <button id="start-scenario-btn" type="button" disabled>Start Scenario</button>
+      <div id="builtin-scenario-controls">
+        <div id="scenario-select-row">
+          <label for="scenario-select">Choose a scenario</label>
+          <select id="scenario-select" disabled>
+            <option>Loading&hellip;</option>
+          </select>
+          <button id="start-scenario-btn" type="button" disabled>Start Scenario</button>
+        </div>
+        <p id="scenario-description" class="status-detail"></p>
       </div>
-      <p id="scenario-description" class="status-detail"></p>
+
+      <div id="wizard-panel" hidden aria-label="Create your own scenario">
+        <p class="status-detail">
+          SAE-DEMO does not send these story ingredients to an AI in this
+          step. Copy the generated prompt to an AI service you choose, then
+          paste the result back.
+        </p>
+
+        <div class="wizard-step" id="wizard-step-1">
+          <h3>Step 1 &mdash; Story ingredients</h3>
+          <form id="wizard-ingredients-form">
+            <label for="wiz-protagonist">Main subject / protagonist</label>
+            <input type="text" id="wiz-protagonist" name="protagonist" required />
+
+            <label for="wiz-long-standing-matter">What has mattered for a long time?</label>
+            <textarea id="wiz-long-standing-matter" name="long_standing_matter" required></textarea>
+
+            <label for="wiz-open-possibility">What possibility or uncertainty is still open?</label>
+            <textarea id="wiz-open-possibility" name="open_possibility" required></textarea>
+
+            <label for="wiz-irreversible-change">What eventually becomes irreversible?</label>
+            <textarea id="wiz-irreversible-change" name="irreversible_change" required></textarea>
+
+            <label for="wiz-neutral-event">What ordinary, neutral action or event occurs?</label>
+            <textarea id="wiz-neutral-event" name="neutral_event" required></textarea>
+
+            <label for="wiz-meaning">What deeper meaning or realization should emerge?</label>
+            <textarea id="wiz-meaning" name="meaning" required></textarea>
+
+            <label for="wiz-relational-pressure">What relationship or practical pressure is present?</label>
+            <textarea id="wiz-relational-pressure" name="relational_pressure" required></textarea>
+
+            <label for="wiz-closure">What closure moment ends the scenario?</label>
+            <textarea id="wiz-closure" name="closure" required></textarea>
+
+            <label for="wiz-tone-notes">Tone/context notes (optional)</label>
+            <textarea id="wiz-tone-notes" name="tone_notes"></textarea>
+
+            <button id="wizard-generate-prompt-btn" type="submit">Generate AI prompt</button>
+          </form>
+          <p id="wizard-ingredients-error" class="status-text status-error" hidden></p>
+        </div>
+
+        <div class="wizard-step" id="wizard-step-2" hidden>
+          <h3>Step 2 &mdash; Copy the generated prompt</h3>
+          <p class="status-detail">
+            Copy this prompt into an AI assistant you trust, run it there, then
+            come back and paste the reply below in Step 3.
+          </p>
+          <textarea id="wizard-prompt-output" readonly aria-label="Generated AI prompt"></textarea>
+          <button id="wizard-copy-prompt-btn" type="button">Copy prompt</button>
+          <p id="wizard-copy-status" class="status-detail" hidden></p>
+        </div>
+
+        <div class="wizard-step" id="wizard-step-3">
+          <h3>Step 3 &mdash; Paste the generated story</h3>
+          <p class="status-detail">
+            Paste the AI&rsquo;s seven-section reply below, exactly as
+            returned, using the <code>[ROLE_NAME]</code> section headers from
+            the prompt.
+          </p>
+          <textarea
+            id="wizard-paste-input"
+            aria-label="Pasted scenario text"
+            placeholder="[BACKGROUND_ATTACHMENT]&#10;...&#10;&#10;[RESIDUAL_POSSIBILITY]&#10;..."
+          ></textarea>
+          <label for="wizard-draft-title">Title (optional)</label>
+          <input type="text" id="wizard-draft-title" />
+          <button id="wizard-parse-btn" type="button">Parse pasted story</button>
+          <div id="wizard-validation-report" hidden></div>
+        </div>
+
+        <div class="wizard-step" id="wizard-step-4" hidden>
+          <h3>Step 4 &mdash; Review and edit segments</h3>
+          <p id="wizard-review-status" class="status-detail"></p>
+          <div id="wizard-segment-editors"></div>
+          <button id="wizard-save-edits-btn" type="button">Save edits</button>
+        </div>
+
+        <div class="wizard-step" id="wizard-step-5" hidden>
+          <h3>Step 5 &mdash; Freeze for comparison</h3>
+          <p class="status-detail">
+            The exact text will be replayed unchanged in Memory OFF and
+            Memory ON. Once frozen, these seven segments can no longer be
+            edited.
+          </p>
+          <button id="wizard-freeze-btn" type="button">Freeze scenario for comparison</button>
+          <p id="wizard-freeze-status" class="status-text" hidden></p>
+        </div>
+
+        <div class="wizard-step" id="wizard-step-6" hidden>
+          <h3>Step 6 &mdash; Run the comparison</h3>
+          <p class="status-detail">
+            This frozen scenario now runs through the same controlled Memory
+            OFF/ON comparison as a built-in scenario, using the Memory choice
+            above.
+          </p>
+          <button id="wizard-start-run-btn" type="button">Start Scenario</button>
+        </div>
+
+        <p class="status-detail">
+          Custom scenarios are stored only in this server&rsquo;s memory for
+          the current session &mdash; a server restart clears them, frozen or
+          not. Live mid-run editing ("exploratory mode") is not part of this
+          stage; the wizard's flow is generate &rarr; paste &rarr; review
+          &rarr; freeze &rarr; compare.
+        </p>
+      </div>
 
       <div id="run-view" hidden>
         <p id="run-progress" class="status-detail"></p>
@@ -166,6 +288,16 @@
       background research context; it does not judge or draw a conclusion
       about the comparison above, which remains for the reader to review
       directly.
+    </p>
+    <p>
+      M5F: "Create your own" builds a custom seven-segment scenario without
+      asking anyone to write one unassisted, and without asking what the
+      model's response should feel like. SAE-DEMO generates a local,
+      copyable prompt for an AI you choose;
+      nothing is sent anywhere by SAE-DEMO itself until you paste a result
+      back. Once you freeze a scenario, its exact text is what runs &mdash;
+      unchanged &mdash; in both Memory OFF and Memory ON, through the same
+      controlled comparison above.
     </p>
   </footer>
 

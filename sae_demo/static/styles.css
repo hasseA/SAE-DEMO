@@ -100,13 +100,27 @@ button:disabled {
   cursor: not-allowed;
 }
 
-select {
+select,
+textarea,
+input[type="text"] {
   font: inherit;
   padding: 0.4rem 0.6rem;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--surface);
   color: var(--text);
+}
+
+textarea,
+input[type="text"] {
+  width: 100%;
+  max-width: 100%;
+}
+
+textarea {
+  min-height: 4.5rem;
+  resize: vertical;
+  font-family: inherit;
 }
 
 label {
@@ -179,14 +193,16 @@ label {
   border: 1px solid var(--border);
 }
 
-#memory-mode-fieldset {
+#memory-mode-fieldset,
+#scenario-source-fieldset {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 0.75rem 1rem 1rem;
   margin: 0 0 1rem;
 }
 
-#memory-mode-fieldset legend {
+#memory-mode-fieldset legend,
+#scenario-source-fieldset legend {
   font-size: 0.8rem;
   font-weight: 600;
   color: var(--text-muted);
@@ -210,6 +226,11 @@ label {
 
 #memory-mode-fieldset .status-detail {
   margin: 0.15rem 0 0 1.4rem;
+}
+
+#scenario-source-fieldset .radio-option {
+  display: inline-flex;
+  margin: 0 1.25rem 0 0;
 }
 
 #conversation {
@@ -420,6 +441,88 @@ footer {
 
 footer p + p {
   margin-top: 0.75rem;
+}
+
+/* -- M5F: Scenario Wizard / Bring Your Own Story ----------------------- */
+
+#wizard-panel {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+
+.wizard-step {
+  padding: 1rem 0;
+}
+
+.wizard-step + .wizard-step {
+  border-top: 1px solid var(--border);
+}
+
+.wizard-step h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+
+.wizard-step label {
+  margin-top: 0.75rem;
+}
+
+.wizard-step label:first-child {
+  margin-top: 0;
+}
+
+.wizard-step button {
+  margin-top: 0.75rem;
+}
+
+#wizard-prompt-output {
+  min-height: 12rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+}
+
+#wizard-paste-input {
+  min-height: 10rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.82rem;
+}
+
+.validation-issue-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.validation-issue-list li {
+  background: var(--bg);
+  border: 1px solid var(--error);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--error);
+}
+
+.wizard-segment-editor {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.75rem 1rem;
+  margin-top: 0.75rem;
+}
+
+.wizard-segment-editor label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.wizard-segment-editor textarea {
+  min-height: 6rem;
+}
+
+.wizard-segment-editor.wizard-segment-short .status-detail {
+  color: var(--error);
 }
 
 @media (max-width: 560px) {

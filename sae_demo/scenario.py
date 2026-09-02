@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, List, Mapping, Tuple
+from typing import Any, Dict, List, Mapping, Tuple
 
 MODE_FROZEN = "frozen"
 MODE_INTERACTIVE = "interactive"
@@ -33,6 +33,37 @@ VALID_SEMANTIC_ROLES = frozenset(
         "closure",
     }
 )
+
+# The exact same seven roles as `VALID_SEMANTIC_ROLES`, but ordered --
+# a frozenset has no order, and both the built-in fixtures' segment
+# sequence and the M5F custom-scenario wizard/paste format need one
+# fixed, public, story-function order to present segments in. This is
+# the single source of that order; nothing else defines a second one.
+ROLE_ORDER: Tuple[str, ...] = (
+    "background_attachment",
+    "residual_possibility",
+    "irreversibility",
+    "neutral_event",
+    "meaning",
+    "relational_pressure",
+    "closure",
+)
+
+# Generic, public-safe human-readable labels for the roles above.
+# Describes story function only -- not private SAE memory structure.
+ROLE_LABELS: Dict[str, str] = {
+    "background_attachment": "Background & attachment",
+    "residual_possibility": "Remaining possibility",
+    "irreversibility": "Irreversible change",
+    "neutral_event": "Neutral event",
+    "meaning": "Meaning",
+    "relational_pressure": "Relational pressure",
+    "closure": "Closure",
+}
+
+
+def role_label(role: str) -> str:
+    return ROLE_LABELS.get(role, role)
 
 
 @dataclass(frozen=True)

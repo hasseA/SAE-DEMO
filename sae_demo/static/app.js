@@ -1,4 +1,4 @@
-// M5A/M5B/M5C/M5D frontend behavior.
+// M5A/M5B/M5C/M5D/M5F frontend behavior.
 //
 // M5A: on load, check backend health and status, show a connected/error
 // indicator.
@@ -19,6 +19,14 @@
 // scenario's own segment text and each condition's reply to it, exactly
 // as the API returns them -- and never rates, ranks, or labels either
 // response as preferable.
+//
+// M5F: "Create your own" lets a user build a custom seven-segment
+// scenario without writing one unassisted -- fill in plain-language
+// ingredients, get back a locally generated (no AI call) copyable
+// prompt, run that prompt through an AI of their own choosing, paste
+// the seven-section result back, review/edit it, then freeze it. A
+// frozen custom scenario runs through the exact same
+// `startRunForScenario`/comparison flow as a built-in one.
 
 let currentRunId = null;
 let scenariosById = {};
@@ -267,18 +275,24 @@ function renderRunState(run) {
   }
 }
 
-async function startScenario() {
-  const select = document.getElementById("scenario-select");
-  const startBtn = document.getElementById("start-scenario-btn");
+// Shared by the built-in scenario path (M5B/M5C) and the M5F "Create
+// your own" wizard's Step 6: once a scenario id is resolvable by the
+// backend (a BUILTIN_SCENARIOS key, or a frozen custom scenario's
+// runnable id), starting a run works identically either way -- this
+// is the one function that calls `POST /api/runs`, so there is no
+// separate custom-scenario run path to keep in sync with this one.
+async function startRunForScenario(scenarioId, triggerBtn) {
   clearScenarioError();
-  startBtn.disabled = true;
+  if (triggerBtn) {
+    triggerBtn.disabled = true;
+  }
 
   try {
     const response = await fetch("/api/runs", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        scenario_id: select.value,
+        scenario_id: scenarioId,
         memory_mode: selectedMemoryMode(),
       }),
     });
@@ -297,8 +311,25 @@ async function startScenario() {
   } catch (error) {
     showScenarioError("Unable to reach the backend right now. Please try again.");
   } finally {
-    startBtn.disabled = false;
+    if (triggerBtn) {
+      triggerBtn.disabled = false;
+    }
   }
+}
+
+function startBuiltinScenario() {
+  const select = document.getElementById("scenario-select");
+  const startBtn = document.getElementById("start-scenario-btn");
+  return startRunForScenario(select.value, startBtn);
+}
+
+function startWizardScenario() {
+  const startBtn = document.getElementById("wizard-start-run-btn");
+  if (!wizardRunnableScenarioId) {
+    showScenarioError("Freeze the custom scenario before starting a comparison run.");
+    return;
+  }
+  return startRunForScenario(wizardRunnableScenarioId, startBtn);
 }
 
 async function advanceSegment() {
@@ -484,14 +515,287 @@ function resetRunView() {
 }
 
 function wireScenarioControls() {
-  document.getElementById("start-scenario-btn").addEventListener("click", startScenario);
+  document.getElementById("start-scenario-btn").addEventListener("click", startBuiltinScenario);
   document.getElementById("next-segment-btn").addEventListener("click", advanceSegment);
   document.getElementById("compare-alternate-btn").addEventListener("click", compareAlternate);
   document.getElementById("start-another-btn").addEventListener("click", resetRunView);
+}
+
+// -- M5F: Scenario Wizard / Bring Your Own Story --------------------------
+//
+// Generate (local, no AI call) -> paste -> review/edit -> freeze ->
+// compare. `wizardCustomScenarioId` is the process-local draft id from
+// `POST /api/custom-scenarios`; `wizardRunnableScenarioId` is set only
+// once that draft is frozen, and is exactly the `scenario_id` passed to
+// `POST /api/runs` by `startWizardScenario` above -- a frozen custom
+// scenario runs through the *same* `startRunForScenario` (and so the
+// same controlled-comparison flow) as any built-in scenario.
+
+let wizardCustomScenarioId = null;
+let wizardRunnableScenarioId = null;
+
+function scenarioSource() {
+  const checked = document.querySelector('input[name="scenario-source"]:checked');
+  return checked ? checked.value : "builtin";
+}
+
+function showWizardStep(stepNumber) {
+  document.getElementById("wizard-step-" + stepNumber).hidden = false;
+}
+
+function wireScenarioSourceControls() {
+  document.querySelectorAll('input[name="scenario-source"]').forEach((input) => {
+    input.addEventListener("change", () => {
+      const source = scenarioSource();
+      document.getElementById("builtin-scenario-controls").hidden = source !== "builtin";
+      document.getElementById("wizard-panel").hidden = source !== "custom";
+      resetRunView();
+    });
+  });
+}
+
+function wizardIngredientsPayload() {
+  const form = document.getElementById("wizard-ingredients-form");
+  const data = new FormData(form);
+  const payload = {};
+  data.forEach((value, key) => {
+    payload[key] = value;
+  });
+  return payload;
+}
+
+async function submitWizardIngredients(event) {
+  event.preventDefault();
+  const errorEl = document.getElementById("wizard-ingredients-error");
+  const generateBtn = document.getElementById("wizard-generate-prompt-btn");
+  errorEl.hidden = true;
+  errorEl.textContent = "";
+  generateBtn.disabled = true;
+
+  try {
+    const response = await fetch("/api/scenario-wizard/prompt", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(wizardIngredientsPayload()),
+    });
+    if (!response.ok) {
+      const message = await extractErrorMessage(
+        response,
+        "Unable to generate a prompt from those ingredients. Every field above is required."
+      );
+      errorEl.textContent = message;
+      errorEl.hidden = false;
+      return;
+    }
+    const body = await response.json();
+    document.getElementById("wizard-prompt-output").value = body.prompt;
+    document.getElementById("wizard-copy-status").hidden = true;
+    showWizardStep(2);
+  } catch (error) {
+    errorEl.textContent = "Unable to reach the backend right now. Please try again.";
+    errorEl.hidden = false;
+  } finally {
+    generateBtn.disabled = false;
+  }
+}
+
+// Browser clipboard API, with a graceful fallback for browsers/contexts
+// where it isn't available (e.g. no `navigator.clipboard`, or a
+// non-secure context): falls back to selecting the text so the user can
+// copy it manually (Ctrl/Cmd+C), rather than failing silently.
+async function copyWizardPrompt() {
+  const textarea = document.getElementById("wizard-prompt-output");
+  const statusEl = document.getElementById("wizard-copy-status");
+
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(textarea.value);
+      statusEl.textContent = "Copied to clipboard.";
+    } else {
+      throw new Error("Clipboard API unavailable");
+    }
+  } catch (error) {
+    textarea.focus();
+    textarea.select();
+    statusEl.textContent = "Prompt text selected -- copy it with Ctrl/Cmd+C.";
+  }
+  statusEl.hidden = false;
+}
+
+function renderWizardValidationReport(issues) {
+  const container = document.getElementById("wizard-validation-report");
+  container.innerHTML = "";
+  if (!issues || issues.length === 0) {
+    container.hidden = true;
+    return;
+  }
+
+  const list = document.createElement("ul");
+  list.className = "validation-issue-list";
+  issues.forEach((issue) => {
+    const item = document.createElement("li");
+    item.textContent = issue.message;
+    list.appendChild(item);
+  });
+  container.appendChild(list);
+  container.hidden = false;
+}
+
+function renderWizardSegmentEditors(segments) {
+  const container = document.getElementById("wizard-segment-editors");
+  container.innerHTML = "";
+  segments.forEach((segment) => {
+    const wrapper = document.createElement("div");
+    wrapper.className = "wizard-segment-editor";
+
+    const label = document.createElement("label");
+    label.setAttribute("for", "wizard-segment-" + segment.role);
+    label.textContent = segment.role_label;
+
+    const textarea = document.createElement("textarea");
+    textarea.id = "wizard-segment-" + segment.role;
+    textarea.dataset.role = segment.role;
+    textarea.value = segment.text;
+
+    wrapper.appendChild(label);
+    wrapper.appendChild(textarea);
+    container.appendChild(wrapper);
+  });
+}
+
+async function parseWizardPaste() {
+  const pasteInput = document.getElementById("wizard-paste-input");
+  const titleInput = document.getElementById("wizard-draft-title");
+  const parseBtn = document.getElementById("wizard-parse-btn");
+  parseBtn.disabled = true;
+
+  try {
+    const response = await fetch("/api/custom-scenarios", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        pasted_text: pasteInput.value,
+        title: titleInput.value,
+      }),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      const issues = (body && body.detail && body.detail.issues) || [];
+      renderWizardValidationReport(issues);
+      return;
+    }
+
+    renderWizardValidationReport([]);
+    wizardCustomScenarioId = body.custom_scenario_id;
+    document.getElementById("wizard-review-status").textContent =
+      "Parsed successfully -- all seven segments found.";
+    renderWizardSegmentEditors(body.segments);
+    showWizardStep(4);
+  } catch (error) {
+    renderWizardValidationReport([
+      { code: "network_error", message: "Unable to reach the backend right now. Please try again." },
+    ]);
+  } finally {
+    parseBtn.disabled = false;
+  }
+}
+
+function collectWizardSegmentEdits() {
+  const segments = {};
+  document.querySelectorAll("#wizard-segment-editors textarea").forEach((textarea) => {
+    segments[textarea.dataset.role] = textarea.value;
+  });
+  return segments;
+}
+
+async function saveWizardEdits() {
+  if (!wizardCustomScenarioId) {
+    return;
+  }
+  const saveBtn = document.getElementById("wizard-save-edits-btn");
+  const statusEl = document.getElementById("wizard-review-status");
+  saveBtn.disabled = true;
+
+  try {
+    const response = await fetch("/api/custom-scenarios/" + wizardCustomScenarioId, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ segments: collectWizardSegmentEdits() }),
+    });
+    const body = await response.json();
+    if (!response.ok) {
+      statusEl.textContent = "Unable to save edits right now. Please try again.";
+      return;
+    }
+    statusEl.textContent = body.valid
+      ? "Edits saved -- all seven segments look complete."
+      : "Edits saved, but some segments still need text before this can be frozen.";
+    renderWizardValidationReport(body.issues);
+    showWizardStep(5);
+  } catch (error) {
+    statusEl.textContent = "Unable to reach the backend right now. Please try again.";
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+async function freezeWizardScenario() {
+  if (!wizardCustomScenarioId) {
+    return;
+  }
+  const freezeBtn = document.getElementById("wizard-freeze-btn");
+  const statusEl = document.getElementById("wizard-freeze-status");
+  freezeBtn.disabled = true;
+
+  try {
+    const response = await fetch(
+      "/api/custom-scenarios/" + wizardCustomScenarioId + "/freeze",
+      { method: "POST" }
+    );
+    const body = await response.json();
+    if (!response.ok) {
+      statusEl.className = "status-text status-error";
+      statusEl.textContent =
+        "This scenario is not ready to freeze yet -- see the issues listed in Step 4.";
+      statusEl.hidden = false;
+      const issues = (body && body.detail && body.detail.issues) || [];
+      renderWizardValidationReport(issues);
+      return;
+    }
+
+    wizardRunnableScenarioId = body.runnable_scenario_id;
+    document.querySelectorAll("#wizard-segment-editors textarea").forEach((textarea) => {
+      textarea.disabled = true;
+    });
+    document.getElementById("wizard-save-edits-btn").disabled = true;
+    statusEl.className = "status-text status-ok";
+    statusEl.textContent = "Frozen. This scenario's text is now fixed and ready to run.";
+    statusEl.hidden = false;
+    showWizardStep(6);
+  } catch (error) {
+    statusEl.className = "status-text status-error";
+    statusEl.textContent = "Unable to reach the backend right now. Please try again.";
+    statusEl.hidden = false;
+  } finally {
+    freezeBtn.disabled = false;
+  }
+}
+
+function wireWizardControls() {
+  document
+    .getElementById("wizard-ingredients-form")
+    .addEventListener("submit", submitWizardIngredients);
+  document.getElementById("wizard-copy-prompt-btn").addEventListener("click", copyWizardPrompt);
+  document.getElementById("wizard-parse-btn").addEventListener("click", parseWizardPaste);
+  document.getElementById("wizard-save-edits-btn").addEventListener("click", saveWizardEdits);
+  document.getElementById("wizard-freeze-btn").addEventListener("click", freezeWizardScenario);
+  document.getElementById("wizard-start-run-btn").addEventListener("click", startWizardScenario);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   loadStatus();
   loadScenarios();
   wireScenarioControls();
+  wireScenarioSourceControls();
+  wireWizardControls();
 });

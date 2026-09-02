@@ -35,13 +35,14 @@ from typing import Dict, List
 import pytest
 from fastapi.testclient import TestClient
 
-from sae_demo import memory_loader, web_app
+from sae_demo import custom_scenario, memory_loader, web_app
 from sae_demo.compatibility_runner import (
     DEFAULT_BEHAVIORAL_USE_POLICY,
     DEFAULT_SYSTEM_MESSAGE,
 )
 from sae_demo.config import DEFAULT_NEBIUS_MODEL
 from sae_demo.nebius_provider import NebiusCompletionResult, NebiusProviderError
+from sae_demo.scenario import ROLE_ORDER
 from sae_demo.web_app import BUILTIN_SCENARIOS, app
 
 # Private-material fragments that must never appear in any response
@@ -298,7 +299,7 @@ def test_status_public_fields_and_no_private_data(
     body = response.json()
 
     assert body["application"] == "SAE-DEMO"
-    assert body["stage"] == "M5E"
+    assert body["stage"] == "M5F"
     assert body["backend_status"] == "ok"
     assert body["target_model"] == DEFAULT_NEBIUS_MODEL
     assert body["memory_feature_status"] == web_app.MEMORY_FEATURE_STATUS
@@ -1584,4 +1585,448 @@ def test_m5e_static_content_renders_with_no_api_key_configured(
 
     status = client.get("/api/status").json()
     assert status["provider_configured"] is False
-    assert status["stage"] == "M5E"
+    assert status["stage"] == "M5F"
+
+
+# -- M5F: Scenario Wizard / Bring Your Own Story -----------------------------
+#
+# Pure prompt-generation/parser/draft logic is covered offline in
+# tests/test_custom_scenario.py. These tests cover the HTTP routes
+# themselves, and -- most importantly -- that a frozen custom scenario
+# runs through the exact same, unmodified controlled Memory OFF/ON
+# comparison machinery M5D already built (no second run/comparison
+# engine), with the exact frozen text replayed unchanged on both
+# sides. Every test here uses only the existing mocked-provider/
+# synthetic-memory-artifact fixtures already defined above -- no
+# network call, no real provider, no real Emotional Memory artifact.
+
+CUSTOM_SCENARIO_PASTE = """
+[BACKGROUND_ATTACHMENT]
+Mira had kept the lighthouse on Gull Point for thirty years, the third
+generation of her family to do so, ever since her grandfather first
+climbed its spiral stairs.
+
+[RESIDUAL_POSSIBILITY]
+The town council had not yet decided whether she could stay on as an
+unofficial caretaker once the automation project finished, and she
+still hoped there might be a way.
+
+[IRREVERSIBILITY]
+The final inspection report arrived: the lighthouse would be
+decommissioned and sealed within the month, its lamp replaced by a
+small automated beacon offshore.
+
+[NEUTRAL_EVENT]
+That afternoon she sorted through a water-stained box of old logbooks
+in the keeper's cottage, setting aside the ones worth keeping.
+
+[MEANING]
+Reading her grandfather's cramped handwriting, she understood that the
+keeping itself, not the light, was what had mattered to her family all
+along.
+
+[RELATIONAL_PRESSURE]
+Her son called again that evening, gently repeating that she should
+move into the spare room at his place in the city before winter.
+
+[CLOSURE]
+On her last morning she carried the oldest logbook down the hill and
+handed it to the curator of the small maritime museum in town.
+""".strip()
+
+
+def _create_custom_scenario(client: TestClient, *, pasted_text: str = CUSTOM_SCENARIO_PASTE, title: str = ""):
+    return client.post("/api/custom-scenarios", json={"pasted_text": pasted_text, "title": title})
+
+
+def _create_and_freeze_custom_scenario(
+    client: TestClient, *, pasted_text: str = CUSTOM_SCENARIO_PASTE, title: str = ""
+) -> dict:
+    create_response = _create_custom_scenario(client, pasted_text=pasted_text, title=title)
+    assert create_response.status_code == 201, create_response.text
+    draft = create_response.json()
+
+    freeze_response = client.post(f"/api/custom-scenarios/{draft['custom_scenario_id']}/freeze")
+    assert freeze_response.status_code == 200, freeze_response.text
+    return freeze_response.json()
+
+
+# 1/2/3/4. wizard prompt generation: local, all seven roles, no private
+# vocabulary, no provider/network call.
+def test_wizard_prompt_endpoint_returns_local_prompt_with_all_roles(client: TestClient) -> None:
+    response = client.post(
+        "/api/scenario-wizard/prompt",
+        json={
+            "protagonist": "Mira, a retired lighthouse keeper",
+            "long_standing_matter": "the lighthouse has been in her family for generations",
+            "open_possibility": "whether she can stay on as caretaker",
+            "irreversible_change": "the lighthouse is decommissioned",
+            "neutral_event": "she sorts through old logbooks",
+            "meaning": "the keeping mattered more than the light",
+            "relational_pressure": "her son wants her to move to the city",
+            "closure": "she gives the last logbook to the museum",
+            "tone_notes": "quiet, reflective",
+        },
+    )
+    assert response.status_code == 200
+    prompt = response.json()["prompt"]
+    for role in ROLE_ORDER:
+        assert f"[{role.upper()}]" in prompt
+    _assert_no_forbidden_material(prompt)
+
+
+def test_wizard_prompt_endpoint_requires_every_field(client: TestClient) -> None:
+    response = client.post(
+        "/api/scenario-wizard/prompt",
+        json={"protagonist": "Mira"},  # every other required field missing
+    )
+    assert response.status_code == 422
+
+
+def test_wizard_prompt_endpoint_makes_no_provider_call(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _fail_if_constructed(*args, **kwargs):
+        raise AssertionError("NebiusProvider must not be constructed to generate a wizard prompt")
+
+    monkeypatch.setattr(web_app, "NebiusProvider", _fail_if_constructed)
+
+    response = client.post(
+        "/api/scenario-wizard/prompt",
+        json={
+            "protagonist": "Mira",
+            "long_standing_matter": "a",
+            "open_possibility": "b",
+            "irreversible_change": "c",
+            "neutral_event": "d",
+            "meaning": "e",
+            "relational_pressure": "f",
+            "closure": "g",
+        },
+    )
+    assert response.status_code == 200
+
+
+# 5/6. parser accepts valid text and preserves body text -- through the
+# actual create-draft HTTP route this time (parse + create merged).
+def test_create_custom_scenario_accepts_valid_paste_and_preserves_text(client: TestClient) -> None:
+    response = _create_custom_scenario(client, title="The Lighthouse Keeper")
+    assert response.status_code == 201
+    body = response.json()
+    assert body["valid"] is True
+    assert body["frozen"] is False
+    assert body["title"] == "The Lighthouse Keeper"
+    assert len(body["segments"]) == len(ROLE_ORDER)
+    segments_by_role = {segment["role"]: segment["text"] for segment in body["segments"]}
+    assert "Gull Point for thirty years" in segments_by_role["background_attachment"]
+    assert "maritime museum in town." in segments_by_role["closure"]
+
+
+# 7/8/9/10. parser rejects malformed paste text via the same route.
+def test_create_custom_scenario_rejects_missing_section(client: TestClient) -> None:
+    missing_closure = CUSTOM_SCENARIO_PASTE.rsplit("[CLOSURE]", 1)[0].strip()
+    response = _create_custom_scenario(client, pasted_text=missing_closure)
+    assert response.status_code == 422
+    issues = response.json()["detail"]["issues"]
+    assert any(issue["code"] == "missing_section" for issue in issues)
+
+
+def test_create_custom_scenario_rejects_duplicate_section(client: TestClient) -> None:
+    duplicated = CUSTOM_SCENARIO_PASTE + "\n\n[CLOSURE]\nA second closure section here."
+    response = _create_custom_scenario(client, pasted_text=duplicated)
+    assert response.status_code == 422
+    issues = response.json()["detail"]["issues"]
+    assert any(issue["code"] == "duplicate_section" for issue in issues)
+
+
+def test_create_custom_scenario_rejects_unknown_section(client: TestClient) -> None:
+    with_unknown = CUSTOM_SCENARIO_PASTE + "\n\n[BOGUS_SECTION]\nNot a real role."
+    response = _create_custom_scenario(client, pasted_text=with_unknown)
+    assert response.status_code == 422
+    issues = response.json()["detail"]["issues"]
+    assert any(issue["code"] == "unknown_section" for issue in issues)
+
+
+def test_create_custom_scenario_rejects_empty_section(client: TestClient) -> None:
+    emptied = CUSTOM_SCENARIO_PASTE.rsplit("[CLOSURE]", 1)[0].strip() + "\n\n[CLOSURE]\n   "
+    response = _create_custom_scenario(client, pasted_text=emptied)
+    assert response.status_code == 422
+    issues = response.json()["detail"]["issues"]
+    assert any(issue["code"] == "empty_section" for issue in issues)
+    _assert_no_forbidden_material(response.text)
+
+
+# 11. draft can be edited before freeze.
+def test_custom_scenario_draft_can_be_edited_before_freeze(client: TestClient) -> None:
+    draft = _create_custom_scenario(client).json()
+    custom_id = draft["custom_scenario_id"]
+
+    response = client.patch(
+        f"/api/custom-scenarios/{custom_id}",
+        json={"segments": {"closure": "A freshly edited closing line for this scenario."}},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    segments_by_role = {segment["role"]: segment["text"] for segment in body["segments"]}
+    assert segments_by_role["closure"] == "A freshly edited closing line for this scenario."
+    assert body["frozen"] is False
+
+
+# 12. frozen scenario cannot be edited.
+def test_frozen_custom_scenario_cannot_be_edited(client: TestClient) -> None:
+    frozen = _create_and_freeze_custom_scenario(client)
+    custom_id = frozen["custom_scenario_id"]
+
+    response = client.patch(
+        f"/api/custom-scenarios/{custom_id}",
+        json={"segments": {"closure": "Trying to edit after freeze."}},
+    )
+    assert response.status_code == 409
+
+    # And the stored text is unchanged.
+    unchanged = client.get(f"/api/custom-scenarios/{custom_id}").json()
+    segments_by_role = {segment["role"]: segment["text"] for segment in unchanged["segments"]}
+    assert "Trying to edit after freeze." not in segments_by_role["closure"]
+
+
+def test_freeze_is_rejected_if_already_frozen(client: TestClient) -> None:
+    frozen = _create_and_freeze_custom_scenario(client)
+    response = client.post(f"/api/custom-scenarios/{frozen['custom_scenario_id']}/freeze")
+    assert response.status_code == 409
+
+
+# 13. freeze requires all seven valid segments.
+def test_freeze_requires_all_seven_valid_segments(client: TestClient) -> None:
+    draft = _create_custom_scenario(client).json()
+    custom_id = draft["custom_scenario_id"]
+
+    client.patch(f"/api/custom-scenarios/{custom_id}", json={"segments": {"closure": "   "}})
+
+    response = client.post(f"/api/custom-scenarios/{custom_id}/freeze")
+    assert response.status_code == 422
+    issues = response.json()["detail"]["issues"]
+    assert any(issue["code"] == "empty_segment_text" for issue in issues)
+
+    state = client.get(f"/api/custom-scenarios/{custom_id}").json()
+    assert state["frozen"] is False
+
+
+# 14/15. frozen custom scenario becomes runnable; unfrozen cannot start a run.
+def test_frozen_custom_scenario_is_runnable(
+    client: TestClient, mock_provider: _FakeProviderRecorder
+) -> None:
+    frozen = _create_and_freeze_custom_scenario(client)
+    runnable_id = frozen["runnable_scenario_id"]
+    assert runnable_id == custom_scenario.CUSTOM_SCENARIO_ID_PREFIX + frozen["custom_scenario_id"]
+
+    response = client.post("/api/runs", json={"scenario_id": runnable_id, "memory_mode": "off"})
+    assert response.status_code == 201
+    run = response.json()
+    assert run["total_segments"] == len(ROLE_ORDER)
+    assert run["scenario_title"] == frozen["title"]
+
+
+def test_unfrozen_custom_scenario_cannot_start_a_run(
+    client: TestClient, mock_provider: _FakeProviderRecorder
+) -> None:
+    draft = _create_custom_scenario(client).json()
+    unfrozen_runnable_id = custom_scenario.CUSTOM_SCENARIO_ID_PREFIX + draft["custom_scenario_id"]
+
+    response = client.post(
+        "/api/runs", json={"scenario_id": unfrozen_runnable_id, "memory_mode": "off"}
+    )
+    assert response.status_code == 409
+    assert draft["frozen"] is False
+
+
+def test_unknown_custom_scenario_id_is_a_404(
+    client: TestClient, mock_provider: _FakeProviderRecorder
+) -> None:
+    response = client.post(
+        "/api/runs",
+        json={"scenario_id": custom_scenario.CUSTOM_SCENARIO_ID_PREFIX + "does-not-exist", "memory_mode": "off"},
+    )
+    assert response.status_code == 404
+
+
+# 16/17/18. controlled comparison over a frozen custom scenario: exact
+# frozen text replayed on both sides, segment order preserved, and the
+# alternate run's own history starts fresh (never carries over the
+# first run's turns) -- exactly the same invariants M5D already proved
+# for built-in scenarios, now proved for a custom one.
+def test_custom_scenario_comparison_replays_exact_frozen_text_both_sides(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    frozen = _create_and_freeze_custom_scenario(client, title="The Lighthouse Keeper")
+    runnable_id = frozen["runnable_scenario_id"]
+    frozen_text_by_role = {segment["role"]: segment["text"] for segment in frozen["segments"]}
+
+    comparison, off_run, on_run = _build_ready_comparison(client, runnable_id, "off")
+
+    assert comparison["status"] == "ready"
+    assert comparison["scenario_title"] == "The Lighthouse Keeper"
+    assert len(comparison["segments"]) == len(ROLE_ORDER)
+
+    # Segment order remains identical to ROLE_ORDER (item 17).
+    assert [segment["role"] for segment in comparison["segments"]] == list(ROLE_ORDER)
+
+    # The exact frozen text -- byte for byte -- is what both the OFF
+    # and ON conditions actually received (item 16).
+    for segment in comparison["segments"]:
+        assert segment["text"] == frozen_text_by_role[segment["role"]]
+
+    # Freezing again / editing is still refused now that it's paired
+    # into a comparison, and the custom scenario draft is unaffected.
+    edit_after_compare = client.patch(
+        f"/api/custom-scenarios/{frozen['custom_scenario_id']}",
+        json={"segments": {"closure": "late edit attempt"}},
+    )
+    assert edit_after_compare.status_code == 409
+
+
+def test_custom_scenario_alternate_run_uses_fresh_history(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    frozen = _create_and_freeze_custom_scenario(client)
+    runnable_id = frozen["runnable_scenario_id"]
+
+    off_run = _complete_run(client, runnable_id, "off")
+    calls_after_off = len(mock_provider.calls)
+
+    alternate_start = client.post(f"/api/runs/{off_run['run_id']}/alternate").json()
+    # The alternate's very first "advance" call builds its own history
+    # from scratch (system message + optional memory + this scenario's
+    # own first segment) -- it must not contain any assistant reply
+    # from the OFF run's own transcript.
+    client.post(f"/api/runs/{alternate_start['run_id']}/advance")
+    first_alternate_call = mock_provider.calls[calls_after_off]
+    off_assistant_texts = {
+        turn["assistant_text"] for turn in off_run["transcript"] if turn.get("assistant_text")
+    }
+    sent_contents = {message["content"] for message in first_alternate_call}
+    assert not (off_assistant_texts & sent_contents)
+
+
+# 19. built-in scenarios remain unchanged.
+def test_builtin_scenarios_unchanged_by_custom_scenario_support(client: TestClient) -> None:
+    response = client.get("/api/scenarios")
+    assert response.status_code == 200
+    ids = {scenario["id"] for scenario in response.json()}
+    assert ids == {"greenhouse", "new_studio"}
+
+
+# 20. custom scenario does not persist to disk.
+def test_custom_scenario_flow_never_touches_the_filesystem(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import builtins
+
+    real_open = builtins.open
+
+    def _guarded_open(*args, **kwargs):
+        raise AssertionError("Custom scenario wizard flow must not open any file.")
+
+    monkeypatch.setattr(builtins, "open", _guarded_open)
+    try:
+        frozen = _create_and_freeze_custom_scenario(client)
+    finally:
+        monkeypatch.setattr(builtins, "open", real_open)
+
+    assert frozen["frozen"] is True
+
+
+# 21. no provider call during wizard/prompt/parse/freeze.
+def test_no_provider_call_during_wizard_lifecycle(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _fail_if_constructed(*args, **kwargs):
+        raise AssertionError("NebiusProvider must not be constructed during wizard/parse/freeze")
+
+    monkeypatch.setattr(web_app, "NebiusProvider", _fail_if_constructed)
+
+    draft = _create_custom_scenario(client).json()
+    custom_id = draft["custom_scenario_id"]
+    client.patch(f"/api/custom-scenarios/{custom_id}", json={"segments": {}})
+    client.get(f"/api/custom-scenarios/{custom_id}")
+    freeze_response = client.post(f"/api/custom-scenarios/{custom_id}/freeze")
+    assert freeze_response.status_code == 200
+
+
+# 22. no memory artifact accessed during wizard creation.
+def test_no_memory_artifact_access_during_wizard_lifecycle(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _fail_if_called(*args, **kwargs):
+        raise AssertionError("load_opaque_memory_artifact must not be called during the wizard flow")
+
+    monkeypatch.setattr(web_app, "load_opaque_memory_artifact", _fail_if_called)
+
+    draft = _create_custom_scenario(client).json()
+    custom_id = draft["custom_scenario_id"]
+    client.patch(f"/api/custom-scenarios/{custom_id}", json={"segments": {}})
+    freeze_response = client.post(f"/api/custom-scenarios/{custom_id}/freeze")
+    assert freeze_response.status_code == 200
+
+
+# 24/25. frontend contains the "Create your own" flow and explains the
+# copy/paste external-AI boundary.
+def test_frontend_contains_create_your_own_flow(client: TestClient) -> None:
+    response = client.get("/")
+    assert "Create your own" in response.text
+    assert 'id="wizard-panel"' in response.text
+    for step_id in (
+        "wizard-step-1",
+        "wizard-step-2",
+        "wizard-step-3",
+        "wizard-step-4",
+        "wizard-step-5",
+        "wizard-step-6",
+    ):
+        assert f'id="{step_id}"' in response.text
+
+    app_js = client.get("/static/app.js").text
+    for fn in (
+        "submitWizardIngredients",
+        "copyWizardPrompt",
+        "parseWizardPaste",
+        "saveWizardEdits",
+        "freezeWizardScenario",
+        "startWizardScenario",
+    ):
+        assert fn in app_js
+
+
+def test_frontend_explains_copy_paste_external_ai_boundary(client: TestClient) -> None:
+    response = client.get("/")
+    normalized = _normalized_whitespace(response.text)
+    assert "does not send these story ingredients to an AI" in normalized
+    assert "Copy prompt" in response.text
+
+
+# 26. no automated emotional scoring language anywhere the wizard adds.
+def test_wizard_frontend_has_no_emotional_scoring_language(client: TestClient) -> None:
+    forbidden_phrases = (
+        "emotion score",
+        "emotional score",
+        "sentiment score",
+        "target emotion",
+        "what emotion should",
+    )
+    for path in ("/", "/static/app.js", "/static/styles.css"):
+        text = client.get(path).text.lower()
+        for phrase in forbidden_phrases:
+            assert phrase not in text
+
+
+# 27. no private SAE identifiers/paths exposed anywhere in the wizard flow.
+def test_wizard_flow_never_exposes_private_material(
+    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+) -> None:
+    frozen = _create_and_freeze_custom_scenario(client, title="The Lighthouse Keeper")
+    runnable_id = frozen["runnable_scenario_id"]
+    comparison, _off_run, _on_run = _build_ready_comparison(client, runnable_id, "off")
+
+    _assert_no_forbidden_material(json.dumps(frozen))
+    _assert_no_forbidden_material(json.dumps(comparison))
+    for path in ("/", "/static/app.js", "/static/styles.css"):
+        _assert_no_forbidden_material(client.get(path).text)
