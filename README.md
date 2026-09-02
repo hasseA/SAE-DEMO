@@ -63,8 +63,6 @@ NEBIUS_BASE_URL=https://api.tokenfactory.nebius.com/v1/
 NEBIUS_MODEL=nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B
 SAE_DEMO_MEMORY_FILE=demo_memory/despair_profile.json
 SAE_DEMO_MAX_TOKENS=400
-SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT=20
-SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL=200
 ```
 
 `.env` is gitignored and is never committed; `.env.example` never contains a real key. See "Key handling" below.
@@ -144,17 +142,15 @@ reachable, follow `docs/PUBLIC_DEPLOYMENT_SAFETY.md`.
 - The key is used only server-side; it is never sent to the frontend and never appears in any API response (`/api/status` reports only whether a key is *present*, as a boolean).
 - No secret manager or vault is used for this local hackathon demo — a local `.env` file is sufficient.
 
-### Public-demo usage protection
+### Provider usage
 
-The public demo has no password or login, so judges can open it and start
-immediately. Process-local inference ceilings protect provider cost:
-`SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT` defaults to `20` per server-issued
-browser session and `SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL` defaults to `200` for
-the process. Failed provider attempts count, and all counters reset on server
-restart. The Nebius API key remains server-side only. These are lightweight
-hackathon-demo safeguards, not production authentication or a distributed
-spending cap; an edge/platform rate limit and provider-side budget controls may
-still be added during deployment. See `docs/PUBLIC_DEPLOYMENT_SAFETY.md`.
+SAE-DEMO is distributed as a locally runnable project. Each user supplies their
+own Nebius API key in their local, gitignored `.env`, and inference usage is
+billed or limited according to that user's Nebius account. SAE-DEMO does not
+impose an artificial inference-call ceiling, so locally configured users can
+run as many Memory OFF/ON comparisons as their provider account permits. The
+key remains only in the local FastAPI process and is never sent to the frontend
+or returned by the API. See `docs/PUBLIC_DEPLOYMENT_SAFETY.md`.
 
 ## Status
 

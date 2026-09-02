@@ -88,7 +88,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Dict, List, Literal, Optional, Tuple
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -103,12 +103,6 @@ from .compatibility_runner import (
 from .config import DEFAULT_NEBIUS_MODEL, MissingNebiusAPIKeyError, load_nebius_config
 from .memory_loader import MemoryArtifactError, load_opaque_memory_artifact
 from .nebius_provider import NebiusProvider
-from .public_demo_protection import (
-    CLIENT_COOKIE_NAME,
-    InferenceLimitExceededError,
-    PublicDemoProtection,
-    load_public_demo_protection_config,
-)
 
 # M5F: local, deterministic prompt generation + paste-format parsing +
 # process-local draft/freeze support for custom scenarios. See that
@@ -150,9 +144,6 @@ MEMORY_LOAD_FAILED_MESSAGE = "Memory artifact could not be loaded."
 MEMORY_INTEGRITY_FAILED_MESSAGE = "Memory artifact failed integrity verification."
 PROVIDER_NOT_CONFIGURED_MESSAGE = "Provider is not configured for this demo."
 PROVIDER_REQUEST_FAILED_MESSAGE = "The model provider request failed. Please try again."
-INFERENCE_LIMIT_REACHED_MESSAGE = (
-    "The public demo has reached its usage limit. Please try again later."
-)
 RUN_NOT_COMPLETE_MESSAGE = "The run must complete before starting a comparison."
 RUN_ALREADY_PAIRED_MESSAGE = "This run is already part of a comparison."
 
@@ -197,7 +188,6 @@ class StatusResponse(BaseModel):
     backend_status: str
     target_model: str
     provider_configured: bool
-    usage_protection_enabled: bool
     memory_feature_status: str
     scenario_feature_status: str
 
@@ -459,7 +449,6 @@ _COMPARISON_REGISTRY: Dict[str, _ComparisonEntry] = {}
 # disk, cleared on restart" invariant as the two registries above.
 _CUSTOM_SCENARIO_REGISTRY: Dict[str, CustomScenarioDraft] = {}
 _REGISTRY_LOCK = threading.Lock()
-_PUBLIC_DEMO_PROTECTION = PublicDemoProtection()
 
 
 def _segment_view(segment) -> SegmentView:
@@ -754,26 +743,6 @@ def _comparison_state(comparison: _ComparisonEntry) -> ComparisonState:
 app = FastAPI(title=APP_NAME)
 
 
-@app.middleware("http")
-async def assign_public_demo_session(request: Request, call_next):
-    """Assign an opaque, server-issued identity for process-local quotas."""
-
-    client_id, cookie_is_new = _PUBLIC_DEMO_PROTECTION.identify_client(
-        request.cookies.get(CLIENT_COOKIE_NAME)
-    )
-    request.state.public_demo_client_id = client_id
-    response = await call_next(request)
-    if cookie_is_new:
-        response.set_cookie(
-            CLIENT_COOKIE_NAME,
-            client_id,
-            httponly=True,
-            samesite="lax",
-            path="/",
-        )
-    return response
-
-
 @app.get("/api/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(status="ok")
@@ -790,7 +759,6 @@ def status() -> StatusResponse:
         backend_status="ok",
         target_model=DEFAULT_NEBIUS_MODEL,
         provider_configured=provider_configured,
-        usage_protection_enabled=True,
         memory_feature_status=MEMORY_FEATURE_STATUS,
         scenario_feature_status=SCENARIO_FEATURE_STATUS,
     )
@@ -950,7 +918,7 @@ def get_run(run_id: str) -> RunState:
 
 
 @app.post("/api/runs/{run_id}/advance", response_model=RunState)
-def advance_run(run_id: str, request: Request) -> RunState:
+def advance_run(run_id: str) -> RunState:
     with _REGISTRY_LOCK:
         entry = _RUN_REGISTRY.get(run_id)
         if entry is None:
@@ -959,16 +927,6 @@ def advance_run(run_id: str, request: Request) -> RunState:
             raise HTTPException(status_code=409, detail="Run failed and cannot continue.")
         if entry.engine.is_complete:
             raise HTTPException(status_code=409, detail="Run already completed.")
-
-        # The sole provider boundary for both Memory OFF and Memory ON.
-        # Failed provider requests intentionally retain this reservation.
-        try:
-            _PUBLIC_DEMO_PROTECTION.reserve_inference(
-                client_id=request.state.public_demo_client_id,
-                config=load_public_demo_protection_config(),
-            )
-        except InferenceLimitExceededError:
-            raise HTTPException(status_code=429, detail=INFERENCE_LIMIT_REACHED_MESSAGE) from None
 
         try:
             sent_record = entry.engine.advance()
