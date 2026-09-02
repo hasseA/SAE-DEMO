@@ -303,6 +303,12 @@ M3D's private testing showed that, even with M4A's anti-recitation rule in place
 
 M4B extends `DEFAULT_BEHAVIORAL_USE_POLICY`'s text with one additional sentence: background context may still shape interpretation, tone, and emotional or relational stance, but concrete details in a response should stay grounded in what the user has actually provided in the current conversation, unless the user explicitly asks about the background context. **This is a consumption-layer behavior rule. It does not modify Emotional Memory** — no context placement, parameter, memory handling, or provider/model configuration changed; the opaque payload and its SHA-256 are exactly as they were before this stage. See `docs/COMPATIBILITY_HARNESS.md` for the full rationale, and `tests/test_compatibility_runner.py` for the offline coverage (which checks the policy text and message structure only — whether a live model actually follows the rule is a separate, later, live test, deliberately out of scope here).
 
+## Strengthened background-context handling (M4C)
+
+M4C strengthens only the shared behavioral-use policy. Representation metadata is explicitly treated as metadata rather than as a person, speaker, identity, persona, or conversational participant; the policy also prohibits exposing representation categories, structure, classifications, scores, and similar annotations. Concrete people, places, events, objects, remembered scenes, and source-specific facts remain grounded in the current conversation instead of being imported from background context as current-scenario facts.
+
+The policy still allows background context to influence interpretation, salience, tone, emphasis, and emotional or relational stance. It does not score behavior, prescribe an emotion, suppress emotional engagement, alter the memory artifact, or create an ON-only instruction. The exact same policy is sent in Memory OFF and Memory ON; only the isolated memory label and opaque payload are present in Memory ON.
+
 ## M4 consumption boundary freeze
 
 The controlling decision behind M4A/M4B, the full M3D -> M4A -> M4B evidence sequence, the frozen consumption architecture, and the public/private IP boundary are now recorded as an authoritative, frozen document: `docs/decisions/SAE_DEMO_M4_CONSUMPTION_BOUNDARY_FREEZE.md`. Read it before proposing any change to Emotional Memory consumption, the behavioral-use policy text, or the payload-integrity mechanism.

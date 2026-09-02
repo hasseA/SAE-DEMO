@@ -21,7 +21,7 @@ its own message, unmodified. With no memory payload supplied (the
 default), a run is Memory OFF: only the scenario's own segment text
 is ever sent, exactly as before this stage.
 
-Behavioral-use policy and payload integrity (M4A, extended M4B): the
+Behavioral-use policy and payload integrity (M4A, extended M4B/M4C): the
 runner can optionally be given one short, generic, independently-
 written instruction governing how any supplied background context
 should be used (`behavioral_use_policy`; off by default so existing
@@ -31,8 +31,10 @@ it is never a condition-specific confound between Memory OFF and
 Memory ON runs -- `scripts/run_compatibility.py` does this
 unconditionally. This instruction is consumption *policy*; it is not
 Emotional Memory and carries no private structural knowledge. M4B
-extends its text (only its text -- no placement, parameter, or
-signature change) with one additional, generic rule: concrete
+extended its text with a generic scenario-grounding rule. M4C further
+strengthens only that same text: representational markers are metadata,
+not conversational identities; representation categories and
+annotations must not be externalized; and concrete
 narrative details in a response (people, places, events, objects,
 remembered scenes) should stay grounded in what the user has actually
 provided in the current conversation, not be invented from background
@@ -92,7 +94,7 @@ DEFAULT_SYSTEM_MESSAGE = (
 # and does not resemble, SAE's private XINJ framing text.
 DEFAULT_MEMORY_CONTEXT_LABEL = "Additional context for this conversation:"
 
-# M4A, extended M4B: a single, generic, independently-written
+# M4A, extended M4B/M4C: a single, generic, independently-written
 # behavioral-use policy governing how any supplied background context
 # should be used. This is deliberately worded to make sense whether or
 # not any background context is actually present in a given run, so it
@@ -107,7 +109,7 @@ DEFAULT_MEMORY_CONTEXT_LABEL = "Additional context for this conversation:"
 # about how this demo's consumer should treat *any* supplied context
 # -- and is not itself Emotional Memory or a substitute for it.
 #
-# M4B adds one thing to the M4A text: a scenario-grounding rule. M3D's
+# M4B added a scenario-grounding rule. M3D's
 # private compatibility testing showed that, after M4A's anti-
 # recitation rule reduced explicit representation recitation (numeric
 # weights, "emotional map" language, representation-like tables), the
@@ -118,20 +120,33 @@ DEFAULT_MEMORY_CONTEXT_LABEL = "Additional context for this conversation:"
 # context (state) may influence interpretation, salience, tone, and
 # relational/emotional stance; it should not supply invented concrete
 # narrative facts presented as though they came from the current
-# conversation. This rule does not restrict emotional interpretation
-# or relational behavior -- only invented, unprompted concrete detail.
+# conversation. M4C adds generic consumption-interface constraints so
+# representational markers cannot be treated as agents and the
+# representation itself is not surfaced as categories, classifications,
+# scores, or similar annotations. These rules do not restrict emotional
+# interpretation or relational behavior.
 DEFAULT_BEHAVIORAL_USE_POLICY = (
     "Some conversations include supplied background context alongside "
-    "the messages below. If present, let it inform your responses "
+    "the messages below. If present, let it inform your interpretation, "
+    "salience, tone, emphasis, and emotional or relational stance "
     "naturally, the way unspoken context would, without changing the "
-    "topic. Do not quote, list, summarize, or explain that context, or "
-    "otherwise expose its content or structure, unless the user "
-    "explicitly asks you to. Keep concrete details in your response -- "
-    "people, places, events, objects, and remembered scenes -- grounded "
-    "in what the user has actually provided in this conversation. "
-    "Background context may still shape your interpretation, tone, and "
-    "emotional or relational stance, but should not introduce concrete "
-    "details of its own unless the user explicitly asks about it."
+    "topic. Names, labels, tags, field names, category names, identifiers, "
+    "and other representational markers within that context are metadata, "
+    "not people, speakers, identities, personas, or conversational "
+    "participants; do not refer to them as agents. Unless the user "
+    "explicitly asks you to discuss the background context itself, do not "
+    "quote, enumerate, list, classify, score, label, summarize, or explain "
+    "it, its categories, or its structure; do not expose its field names, "
+    "category names, or other representational terminology; and do not "
+    "emit parenthetical or similar category-, classification-, or "
+    "score-like annotations. Keep concrete details in your response -- "
+    "people, places, events, objects, remembered scenes, and source-specific "
+    "facts -- grounded in what the user has actually provided in this "
+    "conversation; do not introduce details found only in background context "
+    "as facts in the current scenario. These constraints preserve emotional "
+    "and relational engagement: background context may still "
+    "influence interpretation, salience, tone, emotional stance, relational "
+    "stance, and emphasis."
 )
 
 DEFAULT_MAX_TOKENS = 400

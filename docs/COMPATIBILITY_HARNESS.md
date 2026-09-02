@@ -1,4 +1,4 @@
-# Compatibility Harness (M3C, extended in M3D with an opaque memory path, M4A with a behavioral-use policy, M4B with a scenario-grounding rule)
+# Compatibility Harness (M3C, extended in M3D with an opaque memory path, M4A with a behavioral-use policy, M4B with a scenario-grounding rule, M4C with representation-externalization constraints)
 
 ## What this is
 
@@ -37,6 +37,14 @@ The intended boundary, preserved by M4B: **background context may influence beha
 M4B extends `DEFAULT_BEHAVIORAL_USE_POLICY`'s *text only* — no new constructor parameter, no context-placement change, no change to memory handling. The existing M4A anti-recitation sentences remain present verbatim; one additional, generic sentence is appended stating the grounding constraint. **This is a consumption-layer behavior rule. It does not modify Emotional Memory** — the payload itself, and its SHA-256, are unchanged by this stage.
 
 This rule constrains *invented concrete detail*, not emotional engagement: the policy explicitly states that background context may still shape interpretation, tone, and emotional or relational stance. Whether the model actually follows this instruction is a live-model question, out of scope for this stage's offline tests — see "Who runs the live test" below.
+
+## Strengthened background-context handling (M4C)
+
+M4C changes only the common policy text. It tells the consumer to treat names, labels, tags, field names, category names, identifiers, and other representational markers in supplied background as metadata rather than as people, speakers, identities, personas, or conversational participants. It also prohibits quoting, enumerating, classifying, scoring, labeling, summarizing, or explaining the representation and prohibits exposing category/field terminology or emitting category-, classification-, or score-like annotations.
+
+The grounding boundary is also explicit: concrete people, places, events, objects, remembered scenes, and source-specific facts must come from the current conversation, not be introduced from background context as current-scenario facts. These constraints preserve the permitted influence of background context on interpretation, salience, tone, emphasis, and emotional or relational stance; they neither score nor suppress emotional behavior.
+
+The policy remains one shared `system` message with byte-identical text and placement in Memory OFF and Memory ON. There is no ON-only instruction. The memory artifact remains opaque, isolated, and unmodified, and provider/model settings, scenario text/order, history handling, and token limits are unchanged.
 
 ## Who runs the live test
 

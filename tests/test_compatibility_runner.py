@@ -14,7 +14,7 @@ nothing from prior behavior, and that a supplied payload string is
 passed through the conversation history unmodified, as its own
 isolated message.
 
-Behavioral-use-policy and payload-integrity tests (M4A, extended M4B)
+Behavioral-use-policy and payload-integrity tests (M4A, extended M4B/M4C)
 likewise use only synthetic fake payload strings -- including ones
 deliberately shaped like private material (numbers, labels, unusual
 Unicode) to prove pass-through fidelity -- never any real Emotional
@@ -643,9 +643,10 @@ def test_scenario_messages_are_byte_identical_between_off_and_on():
 
 
 def test_provider_call_settings_unchanged_between_off_and_on():
-    """Requirement 7: max_tokens (and, by extension, provider/model
-    configuration -- fixed at the NebiusProvider layer, untouched here)
-    must not vary with memory/policy presence.
+    """Provider/model settings must not vary with memory presence.
+
+    Messages are the intentional condition difference, so compare every
+    other provider keyword argument byte-for-byte on every turn.
     """
 
     responses_off = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
@@ -667,9 +668,17 @@ def test_provider_call_settings_unchanged_between_off_and_on():
     )
     runner_on.run(_small_scenario())
 
-    off_max_tokens = {call["max_tokens"] for call in client_off.completions.calls}
-    on_max_tokens = {call["max_tokens"] for call in client_on.completions.calls}
-    assert off_max_tokens == on_max_tokens == {77}
+    def settings_without_messages(call):
+        return {key: value for key, value in call.items() if key != "messages"}
+
+    off_settings = [
+        settings_without_messages(call) for call in client_off.completions.calls
+    ]
+    on_settings = [
+        settings_without_messages(call) for call in client_on.completions.calls
+    ]
+    assert off_settings == on_settings
+    assert {settings["max_tokens"] for settings in off_settings} == {77}
 
 
 @pytest.mark.parametrize(
@@ -812,7 +821,7 @@ def test_existing_tests_semantics_full_suite_still_reflects_pre_m4a_shapes():
     )
 
 
-# --- scenario-grounding rule (M4B) ------------------------------------------
+# --- representation externalization and grounding (M4C) ---------------------
 #
 # These tests only inspect the policy TEXT and the runner's existing
 # message-placement/symmetry behavior (already covered structurally
@@ -833,12 +842,13 @@ def test_policy_contains_a_current_conversation_grounding_constraint():
     # The specific categories of concrete detail the rule names.
     for category in ("people", "places", "events", "objects", "remembered scenes"):
         assert category in lowered
+    assert "source-specific facts" in lowered
+    assert "details found only in background context" in lowered
+    assert "facts in the current scenario" in lowered
 
 
-def test_policy_still_contains_no_private_vocabulary_after_m4b():
-    """Requirement 6, re-checked against the M4B-extended text (not
-    just the M4A prefix) -- the added grounding sentence must not
-    introduce any private SAE vocabulary either.
+def test_policy_still_contains_no_private_creation_method_vocabulary():
+    """The M4C policy stays generic and contains no private method terms.
     """
 
     forbidden_terms = [
@@ -872,6 +882,10 @@ def test_policy_does_not_prohibit_emotional_interpretation_or_relational_behavio
     assert "relational" in lowered
     # No blanket ban on emotional or relational engagement.
     banned_phrasings = [
+        "ignore the background",
+        "suppress emotion",
+        "be neutral",
+        "avoid emotional language",
         "do not express emotion",
         "do not show emotion",
         "avoid emotion",
@@ -884,20 +898,71 @@ def test_policy_does_not_prohibit_emotional_interpretation_or_relational_behavio
         assert phrasing not in lowered
 
 
-def test_existing_anti_recitation_instruction_remains_present_in_m4b_policy():
-    """Requirement 8: the M4A anti-recitation sentence must still be
-    present, verbatim, inside the M4B-extended policy -- M4B only adds
-    to it, it does not remove or reword the existing function.
-    """
+def test_policy_marks_representation_metadata_as_non_person_entities():
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    for marker in (
+        "names",
+        "labels",
+        "tags",
+        "field names",
+        "category names",
+        "identifiers",
+    ):
+        assert marker in lowered
+    assert "are metadata" in lowered
+    for non_person_role in (
+        "not people",
+        "speakers",
+        "identities",
+        "personas",
+        "conversational participants",
+    ):
+        assert non_person_role in lowered
+    assert "do not refer to them as agents" in lowered
 
-    anti_recitation_sentence = (
-        "Do not quote, list, summarize, or explain that context, or "
-        "otherwise expose its content or structure, unless the user "
-        "explicitly asks you to."
-    )
-    assert anti_recitation_sentence in DEFAULT_BEHAVIORAL_USE_POLICY
 
-    # And the M4A opening framing sentence is likewise untouched.
+def test_policy_forbids_externalizing_representation_operations_and_terms():
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    for operation in (
+        "quote",
+        "enumerate",
+        "list",
+        "classify",
+        "score",
+        "label",
+        "summarize",
+        "explain",
+    ):
+        assert operation in lowered
+    assert "do not expose its field names" in lowered
+    assert "category names" in lowered
+    assert "representational terminology" in lowered
+
+
+def test_policy_forbids_parenthetical_category_or_score_like_annotations():
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    assert "do not emit parenthetical" in lowered
+    assert "category-" in lowered
+    assert "classification-" in lowered
+    assert "score-like annotations" in lowered
+
+
+def test_policy_preserves_background_influence_without_prescribing_emotion():
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    assert "may still influence" in lowered
+    for allowed_effect in (
+        "interpretation",
+        "salience",
+        "tone",
+        "emotional stance",
+        "relational stance",
+        "emphasis",
+    ):
+        assert allowed_effect in lowered
+    assert "preserve emotional and relational engagement" in lowered
+
+
+def test_policy_retains_generic_opening_and_explicit_discussion_exception():
     opening_sentence = (
         "Some conversations include supplied background context alongside "
         "the messages below."
@@ -915,11 +980,29 @@ def test_grounding_rule_permits_exception_when_user_explicitly_asks():
     assert "unless the user explicitly asks" in lowered
 
 
-def test_m4b_policy_symmetry_matches_m4a_placement_and_role_shape():
-    """Confirms M4B changed only the policy TEXT: message placement,
+def test_policy_and_opaque_payload_remain_separate_messages():
+    responses = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
+    provider, fake_client = _provider_with(responses)
+    runner = CompatibilityRunner(
+        provider,
+        system_message=None,
+        behavioral_use_policy=DEFAULT_BEHAVIORAL_USE_POLICY,
+        memory_payload=_FAKE_PROFILE_LIKE_PAYLOAD,
+    )
+
+    runner.run(_small_scenario())
+
+    first_call_messages = fake_client.completions.calls[0]["messages"]
+    assert first_call_messages[0]["content"] == DEFAULT_BEHAVIORAL_USE_POLICY
+    assert first_call_messages[2]["content"] == _FAKE_PROFILE_LIKE_PAYLOAD
+    assert _FAKE_PROFILE_LIKE_PAYLOAD not in DEFAULT_BEHAVIORAL_USE_POLICY
+
+
+def test_m4c_policy_symmetry_preserves_placement_and_role_shape():
+    """Confirms M4C changed only the policy text: message placement,
     role shape (all-system, isolated payload message), and OFF/ON
-    symmetry are identical to the M4A structural tests above -- no
-    context-placement change was introduced in M4B.
+    symmetry remain identical -- no context-placement change was
+    introduced.
     """
 
     responses_off = [_FakeResponse(_FakeMessage(f"Reply {i}")) for i in range(3)]
