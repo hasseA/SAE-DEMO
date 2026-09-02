@@ -4,7 +4,7 @@
 
 **Nothing originating from private SAE is Git-tracked in SAE-DEMO by default.**
 
-Everything this project generates at runtime — live model outputs, run traces, future generated scenario drafts, and a bounded Emotional Memory artifact — lives under one single, entirely gitignored local root, `.local/`, and stays off the record until someone deliberately decides otherwise.
+Everything this project generates at runtime — live model outputs, run traces, future generated scenario drafts, and a bounded Emotional Memory artifact — lives under one single, entirely gitignored local root, `.local/`, and stays off the record until someone deliberately decides otherwise. As of the M2.1 release-packaging stage, exactly one such artifact has been deliberately promoted out of `.local/` into a small, separate, narrowly-scoped tracked directory — see "The one tracked exception: `demo_memory/`" below. Nothing else changes: every other runtime artifact, and every other memory artifact, stays untracked under `.local/` by default, exactly as before.
 
 ## The `.local/` structure
 
@@ -27,19 +27,26 @@ As of M3D, `.local/memory/` may legitimately contain one or more opaque memory-a
 - Schemas/interfaces that are explicitly designed to be public-safe (e.g. the M3B scenario schema, the M3D opaque memory-artifact envelope shape)
 - Tests, including `tests/test_memory_loader.py`, which uses only synthetic fake payloads
 - Docs
+- `demo_memory/despair_profile.json` — the one Emotional Memory artifact approved for tracked, public distribution (see "The one tracked exception" below); no other file under any `demo_memory/`-shaped or memory-artifact-shaped path is tracked
 
 ## Local-only / gitignored
 
 - API keys (`.env`)
 - Live compatibility run traces and provider outputs
 - Generated scenario drafts (future Scenario Wizard output)
-- Bounded Emotional Memory artifact(s) under `.local/memory/`
+- Bounded Emotional Memory artifact(s) under `.local/memory/` (except the one already-approved artifact separately tracked at `demo_memory/despair_profile.json` — see "The one tracked exception" below)
 - Other private compatibility artifacts
 - Temporary comparison output
 
 ## On the bounded Emotional Memory artifact
 
 A bounded Emotional Memory artifact is **local-only by default**. That is not a permanent prohibition on ever sharing it: it may become publishable only after a separate, explicit disclosure review and approval — the same kind of deliberate decision this project has applied to every other private/public boundary question so far. This document does not define, and this repository never tracks, any such artifact's format details, contents, or provenance beyond the generic envelope shape described above; `.local/memory/` is simply where it lives locally, gitignored, when and if it exists. That review and approval has now occurred for one specific, named profile-representation artifact (see `docs/DISCLOSURE_BOUNDARY.md`, "Profile Emotional Memory release status", and the private repository's M2.1 decision); it has not occurred for the network-representation artifact or for any other artifact, which remain local-only under this rule.
+
+## The one tracked exception: `demo_memory/`
+
+`demo_memory/despair_profile.json` is a Git-tracked, byte-identical copy of the one Emotional Memory artifact approved for public distribution under M2.1 (see `docs/DISCLOSURE_BOUNDARY.md`). It exists so that a fresh clone can run the Memory ON path without needing any access to a developer's `.local/` directory or local machine. It is packaged, not generated: nothing in this repository creates, derives, or modifies it — it is copied in exactly as validated, and `tests/test_release_packaging.py` pins its SHA-256 to catch any accidental change.
+
+`demo_memory/` holds only that one file. It is not a general-purpose public data directory, is not where a new memory artifact should ever be placed without a separate, explicit disclosure decision, and must never contain the network-representation artifact or anything derived from private SAE. The `.gitignore` patterns that once reserved `demo_memory/` for a different, never-used "legacy" convention (Stage 3 planning) have been narrowed accordingly — see `.gitignore`'s comment for the current, precise scope.
 
 ## Compatibility-runner persistence policy
 

@@ -38,9 +38,11 @@ The corresponding network-representation artifact (`content_sha256` `0ede24bf907
 
 This status change affects only which artifact may be distributed and how it may be described. It does not change anything about how this repository's code treats a memory artifact (still loaded and forwarded as an opaque string — see `sae_demo/memory_loader.py`), and it does not disclose, and must never be used to justify disclosing, how SAE creates, extracts, derives, weights, or freezes an Emotional Memory. That creation methodology remains private without qualification.
 
+As of this release-packaging stage, the approved artifact is additionally distributed as a tracked file at `demo_memory/despair_profile.json` (byte-identical to the artifact named above) so that a fresh clone can run Memory ON without any access to the developer's local machine. See `docs/RUNTIME_DATA_BOUNDARY.md` for how this tracked copy relates to the still-local-only `.local/memory/` directory.
+
 ## Runtime data (M3C.1)
 
-**Nothing originating from private SAE is Git-tracked in SAE-DEMO by default.** This applies to source material covered above and, separately, to this project's own runtime output: live run traces, provider responses, generated scenario drafts, and any future bounded Emotional Memory artifact are local-only by default, under the gitignored `.local/` root. See `docs/RUNTIME_DATA_BOUNDARY.md` for the full local/tracked split and how that boundary is checked before a commit.
+**Nothing originating from private SAE is Git-tracked in SAE-DEMO by default.** This applies to source material covered above and, separately, to this project's own runtime output: live run traces, provider responses, generated scenario drafts, and any future bounded Emotional Memory artifact are local-only by default, under the gitignored `.local/` root. See `docs/RUNTIME_DATA_BOUNDARY.md` for the full local/tracked split, how the one approved tracked exception is scoped, and how the boundary is checked before a commit.
 
 ## When in doubt
 

@@ -12,11 +12,16 @@ secrets/
 # docs/RUNTIME_DATA_BOUNDARY.md. Ignored as a whole, one single root.
 .local/
 
-# Legacy bounded demo Emotional Memory artifact patterns from Stage 3
-# planning — superseded by .local/memory/ (see above) but kept here so
-# any file matching this older convention stays ignored too.
-demo_memory/
-*.demo-memory.json
+# demo_memory/ (M2.1 release packaging) — deliberately TRACKED, not
+# ignored. It holds exactly one approved, tracked Emotional Memory
+# export (demo_memory/despair_profile.json) so a fresh clone can run
+# Memory ON with no access to a developer's .local/ directory. See
+# docs/RUNTIME_DATA_BOUNDARY.md, "The one tracked exception". Nothing
+# else may be added there without a separate, explicit disclosure
+# decision -- in particular, never the network-representation artifact.
+# The older *.demo-memory.json Stage-3-planning pattern this used to
+# reserve was never actually used and is removed; a still-local,
+# not-yet-approved artifact belongs under .local/memory/, covered above.
 
 # Dependencies / build output
 node_modules/

@@ -100,14 +100,34 @@ def check_no_secret_like_content(
     return CheckResult("no_secret_like_content", ok, detail)
 
 
+# The single, deliberate, explicitly-approved exception to the
+# "no bounded Emotional Memory artifact is tracked" rule: the one
+# profile-representation artifact cleared for public release under the
+# private repository's M2.1 decision (see docs/DISCLOSURE_BOUNDARY.md,
+# "Profile Emotional Memory release status", and
+# docs/RUNTIME_DATA_BOUNDARY.md, "The one tracked exception"). This is a
+# path allowlist of exactly one entry, not a pattern relaxation — every
+# other path shaped like a bounded memory artifact (anything else under
+# `demo_memory/`, anything under `.local/memory/`, any `*.demo-memory.json`)
+# still fails this check. Changing this constant is itself a disclosure
+# decision and must not be done without the same kind of explicit,
+# recorded approval the current entry has.
+_APPROVED_TRACKED_MEMORY_ARTIFACT_PATHS: Tuple[str, ...] = (
+    "demo_memory/despair_profile.json",
+)
+
+
 def check_no_bounded_memory_artifact_tracked(tracked_paths: Sequence[str]) -> CheckResult:
     offending = [
         p
         for p in tracked_paths
-        if p.startswith(".local/memory/")
-        or p.endswith(".demo-memory.json")
-        or p == "demo_memory"
-        or p.startswith("demo_memory/")
+        if p not in _APPROVED_TRACKED_MEMORY_ARTIFACT_PATHS
+        and (
+            p.startswith(".local/memory/")
+            or p.endswith(".demo-memory.json")
+            or p == "demo_memory"
+            or p.startswith("demo_memory/")
+        )
     ]
     ok = not offending
     detail = "" if ok else f"Tracked bounded-memory-artifact-shaped path(s): {offending}"

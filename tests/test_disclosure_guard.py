@@ -152,6 +152,48 @@ def test_checks_fail_on_legacy_demo_memory_path_tracked():
     assert "no_bounded_memory_artifact_tracked" in [f.name for f in report.failures()]
 
 
+def test_checks_pass_on_the_one_approved_tracked_memory_artifact():
+    # demo_memory/despair_profile.json is the single, explicitly-approved
+    # release exception (M2.1) -- it must not be flagged merely for being
+    # tracked at that exact path.
+    is_ignored, tracked_paths, tracked_file_contents = _clean_repo_shape()
+    tracked_paths = tracked_paths + ["demo_memory/despair_profile.json"]
+
+    report = run_disclosure_checks(
+        is_ignored=is_ignored,
+        tracked_paths=tracked_paths,
+        tracked_file_contents=tracked_file_contents,
+    )
+
+    assert report.passed
+
+
+def test_checks_still_fail_on_any_other_file_alongside_the_approved_one():
+    # The allowlist is exactly one path -- a second, unrelated file under
+    # demo_memory/ must still be flagged, even alongside the approved one.
+    # (Deliberately a generic synthetic name here, not the real
+    # network-representation artifact's name -- this test is about the
+    # allowlist's precision, not about that specific file.)
+    is_ignored, tracked_paths, tracked_file_contents = _clean_repo_shape()
+    tracked_paths = tracked_paths + [
+        "demo_memory/despair_profile.json",
+        "demo_memory/some_other_artifact.json",
+    ]
+
+    report = run_disclosure_checks(
+        is_ignored=is_ignored,
+        tracked_paths=tracked_paths,
+        tracked_file_contents=tracked_file_contents,
+    )
+
+    assert not report.passed
+    failure = next(
+        f for f in report.failures() if f.name == "no_bounded_memory_artifact_tracked"
+    )
+    assert "demo_memory/some_other_artifact.json" in failure.detail
+    assert "demo_memory/despair_profile.json" not in failure.detail
+
+
 # --- disposable, throwaway Git repository fixtures --------------------------
 
 def _run_git(args, cwd):

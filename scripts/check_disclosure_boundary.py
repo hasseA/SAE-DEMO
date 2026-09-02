@@ -11,7 +11,11 @@ Git history. Verifies:
   5. No obvious API-key-like secret appears in tracked files.
   6. No path shaped like a future bounded-memory runtime artifact
      (`.local/memory/...`, `*.demo-memory.json`, `demo_memory/...`)
-     is tracked.
+     is tracked -- except the one, single, explicitly-approved release
+     artifact `demo_memory/despair_profile.json` (see the private
+     repository's M2.1 decision and docs/RUNTIME_DATA_BOUNDARY.md,
+     "The one tracked exception"). Any other path under `demo_memory/`
+     still fails this check.
 
 This is a lightweight guard, not a substitute for the manual
 disclosure-boundary review described in docs/DISCLOSURE_BOUNDARY.md
