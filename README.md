@@ -63,6 +63,9 @@ NEBIUS_BASE_URL=https://api.tokenfactory.nebius.com/v1/
 NEBIUS_MODEL=nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B
 SAE_DEMO_MEMORY_FILE=demo_memory/despair_profile.json
 SAE_DEMO_MAX_TOKENS=400
+SAE_DEMO_ACCESS_CODE=
+SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT=20
+SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL=200
 ```
 
 `.env` is gitignored and is never committed; `.env.example` never contains a real key. See "Key handling" below.
@@ -141,6 +144,19 @@ reachable, follow `docs/PUBLIC_DEPLOYMENT_SAFETY.md`.
 - `.env.example` never contains a real key — only a blank placeholder and public-safe defaults.
 - The key is used only server-side; it is never sent to the frontend and never appears in any API response (`/api/status` reports only whether a key is *present*, as a boolean).
 - No secret manager or vault is used for this local hackathon demo — a local `.env` file is sufficient.
+
+### Public-demo usage protection
+
+For local use, `SAE_DEMO_ACCESS_CODE` may remain blank. Before a public demo,
+set it to a strong shared value in the platform's runtime secret manager. The
+UI asks for it only when configured and keeps it in page memory, sending it
+only on the inference request. Process-local inference ceilings are always
+active: `SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT` defaults to `20` per
+server-issued browser session and `SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL`
+defaults to `200` for the process. Failed provider attempts count, and all
+counters reset on restart. These are lightweight demo safeguards, not
+production authentication or a distributed spending cap; see
+`docs/PUBLIC_DEPLOYMENT_SAFETY.md` for limitations and deployment guidance.
 
 ## Status
 

@@ -31,6 +31,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List
 
 import pytest
@@ -45,6 +46,14 @@ from sae_demo.compatibility_runner import (
 )
 from sae_demo.config import DEFAULT_NEBIUS_MODEL
 from sae_demo.nebius_provider import NebiusCompletionResult, NebiusProviderError
+from sae_demo.public_demo_protection import (
+    DEFAULT_PER_CLIENT_LIMIT,
+    DEFAULT_TOTAL_LIMIT,
+    InferenceLimitExceededError,
+    PublicDemoProtection,
+    PublicDemoProtectionConfig,
+    load_public_demo_protection_config,
+)
 from sae_demo.scenario import ROLE_ORDER
 from sae_demo.web_app import BUILTIN_SCENARIOS, app
 
@@ -78,6 +87,18 @@ FAKE_ASSISTANT_REPLY = "This is a fake assistant reply (test double, not a real 
 def client() -> TestClient:
     with TestClient(app) as test_client:
         yield test_client
+
+
+@pytest.fixture(autouse=True)
+def reset_public_demo_protection(monkeypatch: pytest.MonkeyPatch):
+    """Keep process-local quota state and configuration isolated per test."""
+
+    monkeypatch.delenv("SAE_DEMO_ACCESS_CODE", raising=False)
+    monkeypatch.delenv("SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT", raising=False)
+    monkeypatch.delenv("SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL", raising=False)
+    web_app._PUBLIC_DEMO_PROTECTION.reset_for_tests()
+    yield
+    web_app._PUBLIC_DEMO_PROTECTION.reset_for_tests()
 
 
 def _assert_no_forbidden_material(text: str) -> None:
@@ -2313,8 +2334,12 @@ def test_response_text_css_preserves_whitespace() -> None:
 # re-run as part of every `pytest` invocation of this module; this
 # test is a targeted smoke check, not a substitute for that.)
 def test_m5a_through_m5f_smoke(
-    client: TestClient, mock_provider: _FakeProviderRecorder, configured_memory_artifact
+    client: TestClient,
+    mock_provider: _FakeProviderRecorder,
+    configured_memory_artifact,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT", "40")
     comparison, _off, _on = _build_ready_comparison(client, "greenhouse", "off")
     assert comparison["status"] == "ready"
 
@@ -2324,3 +2349,184 @@ def test_m5a_through_m5f_smoke(
         client, frozen["runnable_scenario_id"], "on"
     )
     assert wizard_comparison["status"] == "ready"
+
+
+# -- Minimal public-demo cost protection -----------------------------------
+
+
+def _start_protected_test_run(client: TestClient, memory_mode: str = "off") -> str:
+    response = client.post(
+        "/api/runs", json={"scenario_id": "greenhouse", "memory_mode": memory_mode}
+    )
+    assert response.status_code == 201
+    return response.json()["run_id"]
+
+
+def test_blank_access_code_preserves_existing_advance_behavior(
+    client: TestClient, mock_provider: _FakeProviderRecorder
+) -> None:
+    run_id = _start_protected_test_run(client)
+
+    response = client.post(f"/api/runs/{run_id}/advance")
+
+    assert response.status_code == 200
+    assert len(mock_provider.calls) == 1
+
+
+def test_configured_access_code_allows_only_matching_header(
+    client: TestClient, mock_provider: _FakeProviderRecorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    access_code = "test-only-shared-code"
+    monkeypatch.setenv("SAE_DEMO_ACCESS_CODE", access_code)
+    run_id = _start_protected_test_run(client)
+
+    missing = client.post(f"/api/runs/{run_id}/advance")
+    wrong = client.post(
+        f"/api/runs/{run_id}/advance",
+        headers={"X-SAE-Demo-Access-Code": "wrong-test-code"},
+    )
+    allowed = client.post(
+        f"/api/runs/{run_id}/advance",
+        headers={"X-SAE-Demo-Access-Code": access_code},
+    )
+
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert missing.json() == {"detail": web_app.ACCESS_CODE_REQUIRED_MESSAGE}
+    assert wrong.json() == {"detail": web_app.ACCESS_CODE_REQUIRED_MESSAGE}
+    assert allowed.status_code == 200
+    assert access_code not in missing.text
+    assert access_code not in wrong.text
+    assert access_code not in allowed.text
+    assert len(mock_provider.calls) == 1
+    assert allowed.json()["current_segment_number"] == 2
+
+
+def test_status_exposes_only_protection_booleans_not_access_code(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    access_code = "secret-test-code-never-returned"
+    monkeypatch.setenv("SAE_DEMO_ACCESS_CODE", access_code)
+
+    response = client.get("/api/status")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["public_demo_protection_enabled"] is True
+    assert body["access_code_required"] is True
+    assert access_code not in response.text
+    monkeypatch.setenv("SAE_DEMO_ACCESS_CODE", "   ")
+    assert client.get("/api/status").json()["access_code_required"] is False
+
+
+def test_protection_config_uses_conservative_defaults_for_invalid_limits() -> None:
+    config = load_public_demo_protection_config(
+        {
+            "SAE_DEMO_ACCESS_CODE": "",
+            "SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT": "0",
+            "SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL": "not-a-number",
+        }
+    )
+
+    assert config.per_client_limit == DEFAULT_PER_CLIENT_LIMIT == 20
+    assert config.total_limit == DEFAULT_TOTAL_LIMIT == 200
+
+
+@pytest.mark.parametrize("memory_mode", ["off", "on"])
+def test_per_client_limit_is_identical_for_memory_off_and_on(
+    client: TestClient,
+    mock_provider: _FakeProviderRecorder,
+    configured_memory_artifact,
+    monkeypatch: pytest.MonkeyPatch,
+    memory_mode: str,
+) -> None:
+    monkeypatch.setenv("SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT", "1")
+    run_id = _start_protected_test_run(client, memory_mode)
+
+    first = client.post(f"/api/runs/{run_id}/advance")
+    blocked = client.post(f"/api/runs/{run_id}/advance")
+
+    assert first.status_code == 200
+    assert blocked.status_code == 429
+    assert blocked.json() == {"detail": web_app.INFERENCE_LIMIT_REACHED_MESSAGE}
+    assert len(mock_provider.calls) == 1
+    assert blocked.json()["detail"] == web_app.INFERENCE_LIMIT_REACHED_MESSAGE
+
+
+def test_global_limit_applies_across_distinct_browser_sessions(
+    mock_provider: _FakeProviderRecorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL", "1")
+    with TestClient(app) as first_client, TestClient(app) as second_client:
+        first_run = _start_protected_test_run(first_client)
+        second_run = _start_protected_test_run(second_client)
+
+        assert first_client.post(f"/api/runs/{first_run}/advance").status_code == 200
+        blocked = second_client.post(f"/api/runs/{second_run}/advance")
+
+    assert blocked.status_code == 429
+    assert blocked.json() == {"detail": web_app.INFERENCE_LIMIT_REACHED_MESSAGE}
+    assert len(mock_provider.calls) == 1
+
+
+def test_non_inference_routes_and_invalid_run_do_not_consume_quota(
+    client: TestClient, mock_provider: _FakeProviderRecorder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL", "1")
+    assert client.get("/api/status").status_code == 200
+    assert client.get("/api/scenarios").status_code == 200
+    assert client.post("/api/runs/not-a-run/advance").status_code == 404
+    run_id = _start_protected_test_run(client)
+
+    assert client.post(f"/api/runs/{run_id}/advance").status_code == 200
+    assert len(mock_provider.calls) == 1
+
+
+def test_provider_failure_consumes_reserved_slot(
+    client: TestClient,
+    failing_mock_provider: _FakeProviderRecorder,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT", "1")
+    failed_run = _start_protected_test_run(client)
+    assert client.post(f"/api/runs/{failed_run}/advance").status_code == 200
+    next_run = _start_protected_test_run(client)
+
+    blocked = client.post(f"/api/runs/{next_run}/advance")
+
+    assert blocked.status_code == 429
+    assert len(failing_mock_provider.calls) == 1
+
+
+def test_quota_reservation_is_atomic_under_concurrency() -> None:
+    protection = PublicDemoProtection()
+    config = PublicDemoProtectionConfig(access_code="", per_client_limit=100, total_limit=7)
+
+    def reserve_once(index: int) -> bool:
+        try:
+            protection.authorize_and_reserve(
+                client_id=f"client-{index}", supplied_access_code=None, config=config
+            )
+            return True
+        except InferenceLimitExceededError:
+            return False
+
+    with ThreadPoolExecutor(max_workers=16) as executor:
+        results = list(executor.map(reserve_once, range(40)))
+
+    assert sum(results) == 7
+    assert protection.counts_for_tests("client-0")[1] == 7
+
+
+def test_frontend_access_code_is_conditional_password_memory_only_header(
+    client: TestClient,
+) -> None:
+    html = client.get("/").text
+    js = client.get("/static/app.js").text
+
+    assert 'id="demo-access-code-control" hidden' in html
+    assert 'type="password" id="demo-access-code"' in html
+    assert "status.access_code_required === true" in js
+    assert '"X-SAE-Demo-Access-Code": demoAccessCode' in js
+    assert "headers: inferenceRequestHeaders()" in js
+    assert "localStorage" not in js

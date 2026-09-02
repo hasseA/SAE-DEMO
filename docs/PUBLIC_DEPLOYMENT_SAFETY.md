@@ -20,7 +20,7 @@ run, but its provider requests likewise occur only through that run's
 The scenario-wizard, custom-scenario, health, status, scenario-listing, run
 state, and comparison routes do not call the provider.
 
-## Existing protections
+## Application safeguards
 
 - The Nebius API key is read only from the server process environment. It is
   never returned to the frontend, API responses, or logs by the application.
@@ -30,25 +30,37 @@ state, and comparison routes do not call the provider.
   completion or failure, and uses a bounded per-turn completion-token setting
   (`SAE_DEMO_MAX_TOKENS`, default `400`).
 - Run and comparison state is process-local and is cleared on restart.
+- Every inference attempt passes through one shared, thread-safe reservation
+  point immediately before the provider call, identically for Memory OFF and
+  Memory ON. Provider failures consume their reserved slot.
+- `SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT` limits one server-issued browser
+  session (default `20`) and `SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL` limits the
+  whole process (default `200`). Both ceilings are always active.
+- `SAE_DEMO_ACCESS_CODE` optionally enables a shared-code gate. When set, the
+  frontend reveals a password input and sends its value only in the
+  `X-SAE-Demo-Access-Code` header on inference-triggering requests. The code is
+  held in page memory only and is never returned by the status API.
 
-These are correctness and secret-handling protections, not abuse controls.
-There is currently no authentication, authorization, per-client rate limit,
-request quota, or spending cap in SAE-DEMO. Anyone who can reach the app can
-create runs and call the inference-triggering endpoint repeatedly. In-memory
-run limits do not prevent repeated new runs or distributed traffic.
+These are deliberately minimal hackathon-demo controls, not production
+authentication, authorization, or a durable/distributed spending system.
+Session identities and counters are process-local, reset on restart, and are
+not coordinated across workers or replicas. A client can clear its cookie or
+use multiple clients to evade the per-client ceiling; the per-process total
+still applies until restart.
 
 ## Minimum protection before public deployment
 
-For the bounded hackathon demo, place the entire application behind a
-deployment-platform access gate (for example, HTTP Basic Auth or an equivalent
-judge credential) and an edge/proxy rate limit. Set Nebius-side budget or usage
-alerts where the account supports them. Keep `NEBIUS_API_KEY` exclusively in
-the deployment platform's server-side secret configuration; never put it in an
-image, Docker build argument, repository file, browser code, or client request.
+For the bounded hackathon demo, configure a strong `SAE_DEMO_ACCESS_CODE` in
+the deployment platform's runtime secret settings and choose conservative
+per-client and total ceilings for the expected judging traffic. Also use an
+edge/proxy rate limit and Nebius-side budget or usage alerts where available.
+Keep `NEBIUS_API_KEY` exclusively in server-side runtime secret configuration;
+never put it in an image, Docker build argument, repository file, browser code,
+or client request.
 
-If the hosting platform can enforce both the access gate and rate limit before
-traffic reaches SAE-DEMO, no application-code change is required for a
-credentialed hackathon deployment. If the app must be reachable as an
-unrestricted anonymous public inference service, abuse protection does require
-code or an external gateway before deployment. Do not expose the current
-provider-triggering route anonymously without such protection.
+The shared access code is intentionally sent by authorized browsers, so it is
+not a substitute for HTTPS or individual accounts. Prefer a single application
+worker if relying on the total ceiling, and treat restarts as resetting the
+budget. For an unrestricted anonymous service, use durable centralized quotas,
+identity-aware authentication, edge controls, and provider-side hard limits;
+the process-local safeguards here are not sufficient for that threat model.
