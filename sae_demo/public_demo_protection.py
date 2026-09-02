@@ -1,8 +1,8 @@
-"""Small, process-local safeguards for public demo inference calls.
+"""Small, process-local cost safeguards for public demo inference calls.
 
-This module deliberately provides only a shared access-code gate and in-memory
-call ceilings. It is not an account, authentication, or distributed rate-limit
-system. All state resets when the server process restarts.
+This module deliberately provides only in-memory call ceilings. It is not an
+account, authentication, or distributed rate-limit system. All state resets
+when the server process restarts.
 """
 
 from __future__ import annotations
@@ -14,19 +14,13 @@ from dataclasses import dataclass
 from typing import Mapping, Optional, Tuple
 
 
-ACCESS_CODE_ENV_VAR = "SAE_DEMO_ACCESS_CODE"
 PER_CLIENT_LIMIT_ENV_VAR = "SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT"
 TOTAL_LIMIT_ENV_VAR = "SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL"
 
-ACCESS_CODE_HEADER = "X-SAE-Demo-Access-Code"
 CLIENT_COOKIE_NAME = "sae_demo_session"
 
 DEFAULT_PER_CLIENT_LIMIT = 20
 DEFAULT_TOTAL_LIMIT = 200
-
-
-class AccessCodeRejectedError(Exception):
-    """The optional configured shared access code did not match."""
 
 
 class InferenceLimitExceededError(Exception):
@@ -35,13 +29,8 @@ class InferenceLimitExceededError(Exception):
 
 @dataclass(frozen=True)
 class PublicDemoProtectionConfig:
-    access_code: str
     per_client_limit: int
     total_limit: int
-
-    @property
-    def access_code_required(self) -> bool:
-        return bool(self.access_code)
 
 
 def _positive_int(value: Optional[str], default: int) -> int:
@@ -57,14 +46,12 @@ def load_public_demo_protection_config(
 ) -> PublicDemoProtectionConfig:
     """Resolve safe protection settings from the environment.
 
-    A blank access code disables only the access-code gate. Positive call
-    ceilings always remain active, with conservative defaults for missing or
-    invalid values.
+    Positive call ceilings always remain active, with conservative defaults
+    for missing or invalid values.
     """
 
     source = env if env is not None else os.environ
     return PublicDemoProtectionConfig(
-        access_code=(source.get(ACCESS_CODE_ENV_VAR) or "").strip(),
         per_client_limit=_positive_int(
             source.get(PER_CLIENT_LIMIT_ENV_VAR), DEFAULT_PER_CLIENT_LIMIT
         ),
@@ -92,24 +79,18 @@ class PublicDemoProtection:
             self._issued_client_ids.add(client_id)
             return client_id, True
 
-    def authorize_and_reserve(
+    def reserve_inference(
         self,
         *,
         client_id: str,
-        supplied_access_code: Optional[str],
         config: PublicDemoProtectionConfig,
     ) -> None:
-        """Authorize and atomically reserve one provider-attempt slot.
+        """Atomically reserve one provider-attempt slot.
 
         The reservation happens immediately before the provider path and is not
         refunded if the provider fails. This prevents repeated failed requests
         from bypassing the ceilings.
         """
-
-        if config.access_code_required:
-            supplied = supplied_access_code or ""
-            if not secrets.compare_digest(supplied, config.access_code):
-                raise AccessCodeRejectedError
 
         with self._lock:
             client_calls = self._per_client_calls.get(client_id, 0)

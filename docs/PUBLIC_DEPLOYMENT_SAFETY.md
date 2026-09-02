@@ -36,13 +36,11 @@ state, and comparison routes do not call the provider.
 - `SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT` limits one server-issued browser
   session (default `20`) and `SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL` limits the
   whole process (default `200`). Both ceilings are always active.
-- `SAE_DEMO_ACCESS_CODE` optionally enables a shared-code gate. When set, the
-  frontend reveals a password input and sends its value only in the
-  `X-SAE-Demo-Access-Code` header on inference-triggering requests. The code is
-  held in page memory only and is never returned by the status API.
 
 These are deliberately minimal hackathon-demo controls, not production
 authentication, authorization, or a durable/distributed spending system.
+The public demo intentionally has no password or login, so judges can use it
+directly.
 Session identities and counters are process-local, reset on restart, and are
 not coordinated across workers or replicas. A client can clear its cookie or
 use multiple clients to evade the per-client ceiling; the per-process total
@@ -50,17 +48,15 @@ still applies until restart.
 
 ## Minimum protection before public deployment
 
-For the bounded hackathon demo, configure a strong `SAE_DEMO_ACCESS_CODE` in
-the deployment platform's runtime secret settings and choose conservative
-per-client and total ceilings for the expected judging traffic. Also use an
-edge/proxy rate limit and Nebius-side budget or usage alerts where available.
+For the bounded hackathon demo, choose conservative per-client and total
+ceilings for the expected judging traffic. Also use an edge/proxy rate limit
+and Nebius-side budget or usage alerts where available.
 Keep `NEBIUS_API_KEY` exclusively in server-side runtime secret configuration;
 never put it in an image, Docker build argument, repository file, browser code,
 or client request.
 
-The shared access code is intentionally sent by authorized browsers, so it is
-not a substitute for HTTPS or individual accounts. Prefer a single application
-worker if relying on the total ceiling, and treat restarts as resetting the
-budget. For an unrestricted anonymous service, use durable centralized quotas,
-identity-aware authentication, edge controls, and provider-side hard limits;
-the process-local safeguards here are not sufficient for that threat model.
+Prefer a single application worker if relying on the total ceiling, and treat
+restarts as resetting the budget. For an unrestricted anonymous service, use
+durable centralized quotas, identity-aware authentication where appropriate,
+edge controls, and provider-side hard limits; the process-local safeguards here
+are not sufficient for that threat model.

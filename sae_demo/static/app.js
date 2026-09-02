@@ -39,15 +39,6 @@
 
 let currentRunId = null;
 let scenariosById = {};
-let accessCodeRequired = false;
-let demoAccessCode = "";
-
-function inferenceRequestHeaders() {
-  if (!accessCodeRequired || !demoAccessCode) {
-    return {};
-  }
-  return { "X-SAE-Demo-Access-Code": demoAccessCode };
-}
 
 async function loadStatus() {
   const backendText = document.getElementById("backend-status-text");
@@ -69,14 +60,6 @@ async function loadStatus() {
     backendText.textContent = "Connected (" + status.stage + ")";
     backendText.classList.remove("status-error");
     backendText.classList.add("status-ok");
-
-    accessCodeRequired = status.access_code_required === true;
-    const accessControl = document.getElementById("demo-access-code-control");
-    accessControl.hidden = !accessCodeRequired;
-    if (!accessCodeRequired) {
-      demoAccessCode = "";
-      document.getElementById("demo-access-code").value = "";
-    }
 
     const providerText = status.provider_configured
       ? "provider configured"
@@ -382,7 +365,6 @@ async function advanceSegment() {
   try {
     const response = await fetch("/api/runs/" + currentRunId + "/advance", {
       method: "POST",
-      headers: inferenceRequestHeaders(),
     });
     if (!response.ok) {
       const message = await extractErrorMessage(
@@ -843,9 +825,6 @@ function wireWizardControls() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
-  document.getElementById("demo-access-code").addEventListener("input", (event) => {
-    demoAccessCode = event.target.value;
-  });
   loadStatus();
   loadScenarios();
   wireScenarioControls();

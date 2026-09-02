@@ -104,9 +104,7 @@ from .config import DEFAULT_NEBIUS_MODEL, MissingNebiusAPIKeyError, load_nebius_
 from .memory_loader import MemoryArtifactError, load_opaque_memory_artifact
 from .nebius_provider import NebiusProvider
 from .public_demo_protection import (
-    ACCESS_CODE_HEADER,
     CLIENT_COOKIE_NAME,
-    AccessCodeRejectedError,
     InferenceLimitExceededError,
     PublicDemoProtection,
     load_public_demo_protection_config,
@@ -152,7 +150,6 @@ MEMORY_LOAD_FAILED_MESSAGE = "Memory artifact could not be loaded."
 MEMORY_INTEGRITY_FAILED_MESSAGE = "Memory artifact failed integrity verification."
 PROVIDER_NOT_CONFIGURED_MESSAGE = "Provider is not configured for this demo."
 PROVIDER_REQUEST_FAILED_MESSAGE = "The model provider request failed. Please try again."
-ACCESS_CODE_REQUIRED_MESSAGE = "A valid demo access code is required."
 INFERENCE_LIMIT_REACHED_MESSAGE = (
     "The public demo has reached its usage limit. Please try again later."
 )
@@ -200,8 +197,7 @@ class StatusResponse(BaseModel):
     backend_status: str
     target_model: str
     provider_configured: bool
-    public_demo_protection_enabled: bool
-    access_code_required: bool
+    usage_protection_enabled: bool
     memory_feature_status: str
     scenario_feature_status: str
 
@@ -788,16 +784,13 @@ def status() -> StatusResponse:
     # Presence check only -- the key's value is never read into this
     # response, logged, or otherwise exposed.
     provider_configured = bool(os.environ.get("NEBIUS_API_KEY"))
-    protection_config = load_public_demo_protection_config()
-
     return StatusResponse(
         application=APP_NAME,
         stage=STAGE_LABEL,
         backend_status="ok",
         target_model=DEFAULT_NEBIUS_MODEL,
         provider_configured=provider_configured,
-        public_demo_protection_enabled=True,
-        access_code_required=protection_config.access_code_required,
+        usage_protection_enabled=True,
         memory_feature_status=MEMORY_FEATURE_STATUS,
         scenario_feature_status=SCENARIO_FEATURE_STATUS,
     )
@@ -970,13 +963,10 @@ def advance_run(run_id: str, request: Request) -> RunState:
         # The sole provider boundary for both Memory OFF and Memory ON.
         # Failed provider requests intentionally retain this reservation.
         try:
-            _PUBLIC_DEMO_PROTECTION.authorize_and_reserve(
+            _PUBLIC_DEMO_PROTECTION.reserve_inference(
                 client_id=request.state.public_demo_client_id,
-                supplied_access_code=request.headers.get(ACCESS_CODE_HEADER),
                 config=load_public_demo_protection_config(),
             )
-        except AccessCodeRejectedError:
-            raise HTTPException(status_code=401, detail=ACCESS_CODE_REQUIRED_MESSAGE) from None
         except InferenceLimitExceededError:
             raise HTTPException(status_code=429, detail=INFERENCE_LIMIT_REACHED_MESSAGE) from None
 

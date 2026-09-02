@@ -102,8 +102,7 @@ button:disabled {
 
 select,
 textarea,
-input[type="text"],
-input[type="password"] {
+input[type="text"] {
   font: inherit;
   padding: 0.4rem 0.6rem;
   border: 1px solid var(--border);
@@ -113,8 +112,7 @@ input[type="password"] {
 }
 
 textarea,
-input[type="text"],
-input[type="password"] {
+input[type="text"] {
   width: 100%;
   max-width: 100%;
 }
@@ -130,10 +128,6 @@ label {
   font-size: 0.85rem;
   color: var(--text-muted);
   margin-bottom: 0.35rem;
-}
-
-#demo-access-code-control {
-  margin-top: 0.9rem;
 }
 
 /* -- How to try it (M5G) ----------------------------------------------- */

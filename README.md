@@ -63,7 +63,6 @@ NEBIUS_BASE_URL=https://api.tokenfactory.nebius.com/v1/
 NEBIUS_MODEL=nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B
 SAE_DEMO_MEMORY_FILE=demo_memory/despair_profile.json
 SAE_DEMO_MAX_TOKENS=400
-SAE_DEMO_ACCESS_CODE=
 SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT=20
 SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL=200
 ```
@@ -147,16 +146,15 @@ reachable, follow `docs/PUBLIC_DEPLOYMENT_SAFETY.md`.
 
 ### Public-demo usage protection
 
-For local use, `SAE_DEMO_ACCESS_CODE` may remain blank. Before a public demo,
-set it to a strong shared value in the platform's runtime secret manager. The
-UI asks for it only when configured and keeps it in page memory, sending it
-only on the inference request. Process-local inference ceilings are always
-active: `SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT` defaults to `20` per
-server-issued browser session and `SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL`
-defaults to `200` for the process. Failed provider attempts count, and all
-counters reset on restart. These are lightweight demo safeguards, not
-production authentication or a distributed spending cap; see
-`docs/PUBLIC_DEPLOYMENT_SAFETY.md` for limitations and deployment guidance.
+The public demo has no password or login, so judges can open it and start
+immediately. Process-local inference ceilings protect provider cost:
+`SAE_DEMO_MAX_INFERENCE_CALLS_PER_CLIENT` defaults to `20` per server-issued
+browser session and `SAE_DEMO_MAX_INFERENCE_CALLS_TOTAL` defaults to `200` for
+the process. Failed provider attempts count, and all counters reset on server
+restart. The Nebius API key remains server-side only. These are lightweight
+hackathon-demo safeguards, not production authentication or a distributed
+spending cap; an edge/platform rate limit and provider-side budget controls may
+still be added during deployment. See `docs/PUBLIC_DEPLOYMENT_SAFETY.md`.
 
 ## Status
 
