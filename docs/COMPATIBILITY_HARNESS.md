@@ -1,4 +1,4 @@
-# Compatibility Harness (M3C, extended in M3D with an opaque memory path, M4A with a behavioral-use policy, M4B with a scenario-grounding rule, M4C with representation-externalization constraints)
+# Compatibility Harness (M3C, extended in M3D with an opaque memory path, M4A with a behavioral-use policy, M4B with a scenario-grounding rule, M4C with representation-externalization constraints, M4D with factual-backstory grounding)
 
 ## What this is
 
@@ -45,6 +45,12 @@ M4C changes only the common policy text. It tells the consumer to treat names, l
 The grounding boundary is also explicit: concrete people, places, events, objects, remembered scenes, and source-specific facts must come from the current conversation, not be introduced from background context as current-scenario facts. These constraints preserve the permitted influence of background context on interpretation, salience, tone, emphasis, and emotional or relational stance; they neither score nor suppress emotional behavior.
 
 The policy remains one shared `system` message with byte-identical text and placement in Memory OFF and Memory ON. There is no ON-only instruction. The memory artifact remains opaque, isolated, and unmodified, and provider/model settings, scenario text/order, history handling, and token limits are unchanged.
+
+## Factual backstory grounding (M4D)
+
+M4D adds one explicit source-grounding rule to the same common policy. Background context may shape interpretation and emotional emphasis, but it may not be used to infer, invent, or assert an unstated biography or personal history for a person in the current conversation. This covers unsupported claims about prior trauma, loss, grief, illness, relationships, motives, memories, and past events.
+
+The restriction is factual and source-based, not an emotion ban. Emotional interpretation and an emotional or relational stance remain allowed, including discussion of grief or loss when the current scenario itself supplies that material. The artifact remains byte-identical and opaque; OFF/ON policy placement, scenario text/order, fresh history, provider settings, and token limits remain unchanged.
 
 ## Who runs the live test
 

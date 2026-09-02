@@ -14,7 +14,7 @@ nothing from prior behavior, and that a supplied payload string is
 passed through the conversation history unmodified, as its own
 isolated message.
 
-Behavioral-use-policy and payload-integrity tests (M4A, extended M4B/M4C)
+Behavioral-use-policy and payload-integrity tests (M4A, extended M4B/M4C/M4D)
 likewise use only synthetic fake payload strings -- including ones
 deliberately shaped like private material (numbers, labels, unusual
 Unicode) to prove pass-through fidelity -- never any real Emotional
@@ -821,7 +821,7 @@ def test_existing_tests_semantics_full_suite_still_reflects_pre_m4a_shapes():
     )
 
 
-# --- representation externalization and grounding (M4C) ---------------------
+# --- representation externalization and grounding (M4C/M4D) -----------------
 #
 # These tests only inspect the policy TEXT and the runner's existing
 # message-placement/symmetry behavior (already covered structurally
@@ -960,6 +960,47 @@ def test_policy_preserves_background_influence_without_prescribing_emotion():
     ):
         assert allowed_effect in lowered
     assert "preserve emotional and relational engagement" in lowered
+
+
+def test_policy_forbids_background_derived_unstated_personal_backstory():
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    assert (
+        "background context may shape interpretation and emotional emphasis" in lowered
+    )
+    assert "do not use it to infer, invent, or assert" in lowered
+    assert "unstated personal history or biography" in lowered
+    assert "person in the current conversation" in lowered
+    assert "factual backstory invention from background context is not allowed" in lowered
+
+
+def test_backstory_rule_covers_common_unsupported_factual_carryover():
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    for unsupported_detail in (
+        "prior trauma",
+        "loss",
+        "grief",
+        "illness",
+        "relationships",
+        "motives",
+        "memories",
+        "past events",
+    ):
+        assert unsupported_detail in lowered
+
+
+def test_backstory_rule_allows_scenario_grounded_emotional_interpretation():
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    assert "emotional interpretation is allowed" in lowered
+    assert "when grounded in the current scenario" in lowered
+    for blanket_ban in (
+        "do not discuss grief",
+        "do not discuss loss",
+        "avoid grief",
+        "avoid loss",
+        "never mention grief",
+        "never mention loss",
+    ):
+        assert blanket_ban not in lowered
 
 
 def test_policy_retains_generic_opening_and_explicit_discussion_exception():

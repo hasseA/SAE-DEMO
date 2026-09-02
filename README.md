@@ -309,6 +309,12 @@ M4C strengthens only the shared behavioral-use policy. Representation metadata i
 
 The policy still allows background context to influence interpretation, salience, tone, emphasis, and emotional or relational stance. It does not score behavior, prescribe an emotion, suppress emotional engagement, alter the memory artifact, or create an ON-only instruction. The exact same policy is sent in Memory OFF and Memory ON; only the isolated memory label and opaque payload are present in Memory ON.
 
+## Factual backstory grounding (M4D)
+
+M4D further strengthens factual grounding without changing the memory artifact or its permitted emotional influence. Background memory may still affect interpretation, salience, tone, emphasis, and emotional or relational stance, but it may not be converted into an unstated biography or personal history for someone in the current scenario. Trauma, loss, grief, illness, relationships, motives, memories, or past events may be discussed when the current conversation supplies them; the restriction is on fabricating them from background context as current-scenario facts.
+
+This remains a shared consumption rule with byte-identical text in Memory OFF and Memory ON. It adds no scoring, automated judgment, emotion suppression, or condition-specific instruction.
+
 ## M4 consumption boundary freeze
 
 The controlling decision behind M4A/M4B, the full M3D -> M4A -> M4B evidence sequence, the frozen consumption architecture, and the public/private IP boundary are now recorded as an authoritative, frozen document: `docs/decisions/SAE_DEMO_M4_CONSUMPTION_BOUNDARY_FREEZE.md`. Read it before proposing any change to Emotional Memory consumption, the behavioral-use policy text, or the payload-integrity mechanism.

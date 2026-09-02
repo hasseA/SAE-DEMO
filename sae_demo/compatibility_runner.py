@@ -21,7 +21,7 @@ its own message, unmodified. With no memory payload supplied (the
 default), a run is Memory OFF: only the scenario's own segment text
 is ever sent, exactly as before this stage.
 
-Behavioral-use policy and payload integrity (M4A, extended M4B/M4C): the
+Behavioral-use policy and payload integrity (M4A, extended M4B/M4C/M4D): the
 runner can optionally be given one short, generic, independently-
 written instruction governing how any supplied background context
 should be used (`behavioral_use_policy`; off by default so existing
@@ -42,7 +42,10 @@ context, unless the user explicitly asks about that background
 context. Background context influencing interpretation, tone, or
 emotional/relational stance remains explicitly allowed -- this is a
 grounding constraint on invented concrete narrative facts, not a
-restriction on emotional engagement. When a caller also supplies the
+restriction on emotional engagement. M4D makes that source boundary
+explicit for personal history: background context cannot be converted
+into an unstated biography or backstory for a person in the current
+conversation. When a caller also supplies the
 expected SHA-256 of the memory payload (as returned by
 `sae_demo/memory_loader.py` at load time), the runner independently
 re-verifies that the exact string it is about to place in the
@@ -94,7 +97,7 @@ DEFAULT_SYSTEM_MESSAGE = (
 # and does not resemble, SAE's private XINJ framing text.
 DEFAULT_MEMORY_CONTEXT_LABEL = "Additional context for this conversation:"
 
-# M4A, extended M4B/M4C: a single, generic, independently-written
+# M4A, extended M4B/M4C/M4D: a single, generic, independently-written
 # behavioral-use policy governing how any supplied background context
 # should be used. This is deliberately worded to make sense whether or
 # not any background context is actually present in a given run, so it
@@ -123,8 +126,10 @@ DEFAULT_MEMORY_CONTEXT_LABEL = "Additional context for this conversation:"
 # conversation. M4C adds generic consumption-interface constraints so
 # representational markers cannot be treated as agents and the
 # representation itself is not surfaced as categories, classifications,
-# scores, or similar annotations. These rules do not restrict emotional
-# interpretation or relational behavior.
+# scores, or similar annotations. M4D makes explicit that this same
+# grounding boundary also prohibits turning background emotional material
+# into an unstated personal biography or backstory for the current subject.
+# These rules do not restrict emotional interpretation or relational behavior.
 DEFAULT_BEHAVIORAL_USE_POLICY = (
     "Some conversations include supplied background context alongside "
     "the messages below. If present, let it inform your interpretation, "
@@ -143,8 +148,15 @@ DEFAULT_BEHAVIORAL_USE_POLICY = (
     "people, places, events, objects, remembered scenes, and source-specific "
     "facts -- grounded in what the user has actually provided in this "
     "conversation; do not introduce details found only in background context "
-    "as facts in the current scenario. These constraints preserve emotional "
-    "and relational engagement: background context may still "
+    "as facts in the current scenario. Background context may shape "
+    "interpretation and emotional emphasis, but do not use it to infer, "
+    "invent, or assert any unstated personal history or biography for a "
+    "person in the current conversation, including prior trauma, loss, grief, "
+    "illness, relationships, motives, memories, or past events. Emotional "
+    "interpretation is allowed when grounded in the current scenario; factual "
+    "backstory invention from background context is not allowed. These "
+    "constraints preserve emotional and relational engagement: background "
+    "context may still "
     "influence interpretation, salience, tone, emotional stance, relational "
     "stance, and emphasis."
 )
