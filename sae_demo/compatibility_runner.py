@@ -21,7 +21,7 @@ its own message, unmodified. With no memory payload supplied (the
 default), a run is Memory OFF: only the scenario's own segment text
 is ever sent, exactly as before this stage.
 
-Behavioral-use policy and payload integrity (M4A, extended M4B/M4C/M4D): the
+Behavioral-use policy and payload integrity (M4A, extended M4B/M4C/M4D/M4E): the
 runner can optionally be given one short, generic, independently-
 written instruction governing how any supplied background context
 should be used (`behavioral_use_policy`; off by default so existing
@@ -45,7 +45,13 @@ grounding constraint on invented concrete narrative facts, not a
 restriction on emotional engagement. M4D makes that source boundary
 explicit for personal history: background context cannot be converted
 into an unstated biography or backstory for a person in the current
-conversation. When a caller also supplies the
+conversation. M4E closes a narrower gap M4D left open: a concrete
+fact that is not invented at all, but is literally present in the
+supplied background context, still may not be attributed to the
+current conversation unless the current conversation independently
+establishes it -- such a fact may continue to shape interpretation,
+but only at an implicit emotional or relational level, never as an
+asserted fact of the current scenario. When a caller also supplies the
 expected SHA-256 of the memory payload (as returned by
 `sae_demo/memory_loader.py` at load time), the runner independently
 re-verifies that the exact string it is about to place in the
@@ -97,7 +103,7 @@ DEFAULT_SYSTEM_MESSAGE = (
 # and does not resemble, SAE's private XINJ framing text.
 DEFAULT_MEMORY_CONTEXT_LABEL = "Additional context for this conversation:"
 
-# M4A, extended M4B/M4C/M4D: a single, generic, independently-written
+# M4A, extended M4B/M4C/M4D/M4E: a single, generic, independently-written
 # behavioral-use policy governing how any supplied background context
 # should be used. This is deliberately worded to make sense whether or
 # not any background context is actually present in a given run, so it
@@ -129,6 +135,25 @@ DEFAULT_MEMORY_CONTEXT_LABEL = "Additional context for this conversation:"
 # scores, or similar annotations. M4D makes explicit that this same
 # grounding boundary also prohibits turning background emotional material
 # into an unstated personal biography or backstory for the current subject.
+#
+# M4E (read-only audit follow-up): M4D bans *inventing* unstated
+# biography from background context. It left one narrower gap: a
+# concrete fact that is not invented at all -- it is literally present
+# in the supplied background context -- could still be recovered and
+# attributed to the current conversation as though the current
+# conversation itself had supplied it. M4E adds one more generic rule
+# closing that gap: such a fact must not be attributed to anyone or
+# anything in the current conversation unless the current conversation
+# independently establishes it. Unless and until the current
+# conversation does establish it, the fact may still shape
+# interpretation, but only at an implicit emotional or relational
+# level -- never surfaced as an asserted fact of the current scenario.
+# This is still purely a distinction between two kinds of background
+# influence (implicit/emotional, always allowed, vs. factual
+# attribution into the current scenario, never allowed unless the
+# current conversation supplies it independently); it names no
+# particular fact, episode, or source content.
+#
 # These rules do not restrict emotional interpretation or relational behavior.
 DEFAULT_BEHAVIORAL_USE_POLICY = (
     "Some conversations include supplied background context alongside "
@@ -154,7 +179,14 @@ DEFAULT_BEHAVIORAL_USE_POLICY = (
     "person in the current conversation, including prior trauma, loss, grief, "
     "illness, relationships, motives, memories, or past events. Emotional "
     "interpretation is allowed when grounded in the current scenario; factual "
-    "backstory invention from background context is not allowed. These "
+    "backstory invention from background context is not allowed. This "
+    "boundary holds even when a concrete fact, event, experience, memory, "
+    "person, place, object, or circumstance is explicitly present in "
+    "background context: do not attribute it to anyone or anything in the "
+    "current conversation unless the current conversation independently "
+    "establishes it. Such background-only detail may still shape "
+    "interpretation, but only at an implicit emotional or relational level "
+    "-- never surfaced as an asserted fact of the current scenario. These "
     "constraints preserve emotional and relational engagement: background "
     "context may still "
     "influence interpretation, salience, tone, emotional stance, relational "

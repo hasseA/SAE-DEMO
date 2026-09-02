@@ -315,6 +315,12 @@ M4D further strengthens factual grounding without changing the memory artifact o
 
 This remains a shared consumption rule with byte-identical text in Memory OFF and Memory ON. It adds no scoring, automated judgment, emotion suppression, or condition-specific instruction.
 
+## Factual-attribution boundary for literal background-only facts (M4E)
+
+A read-only compatibility audit found a narrower gap M4D left open: M4D bans *inventing* unstated biography, but a concrete fact that is not invented at all — one that is literally present in the supplied background context — could still be recovered and attributed to the current conversation as though the current conversation itself had supplied it. M4E adds one more generic rule closing that gap: such a fact must not be attributed to anyone or anything in the current conversation unless the current conversation independently establishes it. Until it does, that background-only detail may still shape interpretation, but only at an implicit emotional or relational level — never surfaced as an asserted fact of the current scenario.
+
+This is the same class of change as M4B/M4C/M4D: text-only, generic, and independently written — no mention of any particular fact, episode, or source content, and no scenario-specific vocabulary. It changes nothing about memory placement, provider/model configuration, reasoning configuration, `max_tokens`, or the OFF/ON comparison architecture, and the memory artifact itself is untouched. The policy remains byte-identical in Memory OFF and Memory ON; only the isolated memory label and opaque payload are present in Memory ON. See `docs/COMPATIBILITY_HARNESS.md` for the full rationale and `tests/test_compatibility_runner.py` for the offline coverage.
+
 ## M4 consumption boundary freeze
 
 The controlling decision behind M4A/M4B, the full M3D -> M4A -> M4B evidence sequence, the frozen consumption architecture, and the public/private IP boundary are now recorded as an authoritative, frozen document: `docs/decisions/SAE_DEMO_M4_CONSUMPTION_BOUNDARY_FREEZE.md`. Read it before proposing any change to Emotional Memory consumption, the behavioral-use policy text, or the payload-integrity mechanism.

@@ -1,4 +1,4 @@
-# Compatibility Harness (M3C, extended in M3D with an opaque memory path, M4A with a behavioral-use policy, M4B with a scenario-grounding rule, M4C with representation-externalization constraints, M4D with factual-backstory grounding)
+# Compatibility Harness (M3C, extended in M3D with an opaque memory path, M4A with a behavioral-use policy, M4B with a scenario-grounding rule, M4C with representation-externalization constraints, M4D with factual-backstory grounding, M4E with a factual-attribution boundary for literal background-only facts)
 
 ## What this is
 
@@ -51,6 +51,16 @@ The policy remains one shared `system` message with byte-identical text and plac
 M4D adds one explicit source-grounding rule to the same common policy. Background context may shape interpretation and emotional emphasis, but it may not be used to infer, invent, or assert an unstated biography or personal history for a person in the current conversation. This covers unsupported claims about prior trauma, loss, grief, illness, relationships, motives, memories, and past events.
 
 The restriction is factual and source-based, not an emotion ban. Emotional interpretation and an emotional or relational stance remain allowed, including discussion of grief or loss when the current scenario itself supplies that material. The artifact remains byte-identical and opaque; OFF/ON policy placement, scenario text/order, fresh history, provider settings, and token limits remain unchanged.
+
+## Factual-attribution boundary for literal background-only facts (M4E)
+
+A read-only compatibility audit of a live Memory ON run identified a narrower gap than M4D covers: M4D prohibits *inventing* unstated biography from background context, but says nothing specific about a concrete fact that is not invented at all — one that is literally present in the supplied background context — being recovered and attributed to the current conversation as though the current conversation itself had supplied it. The audit found this is exactly what can happen: the model can recover a real, literally-present detail from background context and present it as a fact about the current scenario/person.
+
+M4E adds one further, still fully generic sentence to the same common policy, distinguishing two things that were previously conflated under one grounding rule: **emotional/relational influence from background context is allowed**, but **factual attribution or retrieval of a background-only detail into the current scenario is not allowed unless the current conversation independently establishes that fact**. This holds even when the detail is explicitly present in the background context — the boundary is about where a fact is *attributed*, not whether it exists in context at all. Until the current conversation independently supplies it, such a detail may continue to shape interpretation, but only at an implicit emotional or relational level, never as an asserted fact of the current scenario.
+
+M4E names no particular fact, episode, or source content, and adds no scenario-specific vocabulary — consistent with every prior stage, the policy text carries no private structural knowledge and is not itself Emotional Memory or a substitute for it. It changes nothing about memory placement/order, provider/model configuration, reasoning configuration, `max_tokens`, scenario text/order, or the OFF/ON comparison architecture; the artifact remains byte-identical and opaque, and the policy remains one shared `system` message sent identically in Memory OFF and Memory ON.
+
+As with M4B/M4C/M4D, whether the target model actually honors this refined instruction is a live-model question, out of scope for this stage's offline tests, and this refinement is explicitly not expected to be the final word — see the read-only M4D audit's own conclusion that a further generic refinement should be validated across multiple fresh runs, not accepted on one clean-looking sample.
 
 ## Who runs the live test
 

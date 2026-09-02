@@ -14,11 +14,11 @@ nothing from prior behavior, and that a supplied payload string is
 passed through the conversation history unmodified, as its own
 isolated message.
 
-Behavioral-use-policy and payload-integrity tests (M4A, extended M4B/M4C/M4D)
-likewise use only synthetic fake payload strings -- including ones
-deliberately shaped like private material (numbers, labels, unusual
-Unicode) to prove pass-through fidelity -- never any real Emotional
-Memory content.
+Behavioral-use-policy and payload-integrity tests (M4A, extended
+M4B/M4C/M4D/M4E) likewise use only synthetic fake payload strings --
+including ones deliberately shaped like private material (numbers,
+labels, unusual Unicode) to prove pass-through fidelity -- never any
+real Emotional Memory content.
 """
 
 import hashlib
@@ -821,7 +821,7 @@ def test_existing_tests_semantics_full_suite_still_reflects_pre_m4a_shapes():
     )
 
 
-# --- representation externalization and grounding (M4C/M4D) -----------------
+# --- representation externalization and grounding (M4C/M4D/M4E) -------------
 #
 # These tests only inspect the policy TEXT and the runner's existing
 # message-placement/symmetry behavior (already covered structurally
@@ -1001,6 +1001,118 @@ def test_backstory_rule_allows_scenario_grounded_emotional_interpretation():
         "never mention loss",
     ):
         assert blanket_ban not in lowered
+
+
+
+# --- factual-attribution boundary for literal background-only facts (M4E) ---
+#
+# The read-only M4D audit established a narrower remaining gap: M4D
+# prohibits *inventing* unstated biography. It does not, on its own,
+# say anything about a concrete fact that is not invented at all --
+# one that is literally present in the supplied background context --
+# being recovered and attributed to the current conversation as
+# though the current conversation itself had supplied it. M4E adds
+# one more generic rule closing exactly that gap. Like the M4C/M4D
+# tests above, these inspect the policy string and the runner's
+# existing placement/symmetry behavior only -- no live model is
+# simulated here.
+
+def test_policy_forbids_attribution_of_literal_background_only_facts():
+    """M4E: even when a fact is explicitly present in background
+    context, it must not be attributed to the current conversation
+    unless the current conversation independently establishes it.
+    """
+
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    assert "even when" in lowered
+    assert "explicitly present in" in lowered
+    assert "background context" in lowered
+    assert "do not attribute it to anyone or anything in the current conversation" in lowered
+    assert "unless the current conversation independently establishes it" in lowered
+
+
+def test_m4e_rule_covers_concrete_detail_categories():
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    for category in (
+        "fact",
+        "event",
+        "experience",
+        "memory",
+        "person",
+        "place",
+        "object",
+        "circumstance",
+    ):
+        assert category in lowered
+
+
+def test_m4e_rule_still_permits_implicit_emotional_influence_only():
+    """M4E narrows what a literal background-only fact may do to an
+    implicit emotional/relational level -- it does not ban background
+    influence altogether; that stays governed by M4A-M4D's existing,
+    unweakened allowances.
+    """
+
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    assert "may still shape interpretation" in lowered
+    assert "implicit emotional or relational level" in lowered
+    assert "never surfaced as an asserted fact of the current scenario" in lowered
+
+
+def test_m4d_and_m4e_rules_are_both_present_and_distinct():
+    """M4D bans *inventing* unstated biography; M4E separately bans
+    *attributing* a real, literally-present background-only fact to
+    the current scenario. Both must survive this change, and neither
+    rule's wording subsumes or replaces the other.
+    """
+
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    # M4D: invention/assertion of unstated biography.
+    assert "do not use it to infer, invent, or assert" in lowered
+    assert "unstated personal history or biography" in lowered
+    # M4E: attribution of a literally-present background-only fact.
+    assert "this boundary holds even when" in lowered
+    assert "do not attribute it to anyone or anything in the current conversation" in lowered
+
+
+def test_current_conversation_facts_remain_usable_under_m4e():
+    """M4E's restriction is scoped to background-*only* facts. A fact
+    the current conversation itself supplies is unaffected: the
+    policy's pre-existing 'grounded in what the user has actually
+    provided in this conversation' language is unchanged, and M4E's
+    own new clause is explicitly conditioned on 'unless the current
+    conversation independently establishes it'.
+    """
+
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    assert "grounded in what the user has actually provided" in lowered
+    assert "unless the current conversation independently establishes it" in lowered
+
+
+def test_production_policy_contains_no_source_episode_vocabulary():
+    """Requirement 10: M4E must not introduce any scenario-specific or
+    source-episode vocabulary into the shared, generic production
+    policy. This checks the literal terms tied to the one specific
+    private episode discussed in the M4D read-only audit -- not the
+    pre-existing, generic M4D category words (trauma/loss/grief/
+    illness/relationships/motives/memories/past events), which are
+    ordinary English category labels already covered by
+    `test_backstory_rule_covers_common_unsupported_factual_carryover`
+    above and are unchanged by this stage.
+    """
+
+    lowered = DEFAULT_BEHAVIORAL_USE_POLICY.lower()
+    forbidden_source_specific_terms = (
+        "hospital",
+        "song",
+        "psychosis",
+        "psychotic",
+        "flood",
+        "desk",
+        "lamp",
+    )
+    for term in forbidden_source_specific_terms:
+        assert term not in lowered
 
 
 def test_policy_retains_generic_opening_and_explicit_discussion_exception():
