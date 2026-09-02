@@ -276,3 +276,17 @@ python scripts/check_disclosure_boundary.py
 ```
 
 See `docs/RUNTIME_DATA_BOUNDARY.md` for the full tracked-vs-local-only split, the rule this stage enforces (nothing originating from private SAE is Git-tracked in SAE-DEMO by default), and the one deliberate, narrowly-scoped tracked exception this release-packaging stage adds (`demo_memory/despair_profile.json`).
+
+## License
+
+SAE-DEMO is licensed under the Mozilla Public License 2.0 (MPL-2.0).
+See `LICENSE`.
+
+The approved `demo_memory/despair_profile.json` artifact is included as
+part of this released work. The separate private SAE research repository
+and unreleased Emotional Memory creation methodology are not included in
+this repository or license grant.
+
+Third-party services, models, dependencies, and trademarks remain subject
+to their respective terms. No trademark rights are granted by the
+MPL-2.0 license.
