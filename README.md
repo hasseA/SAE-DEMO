@@ -103,6 +103,36 @@ http://127.0.0.1:8000
 
 See "Local web demo" below for the full walkthrough of every step, and "Key handling" for what happens to your API key.
 
+## Container / deployment preparation
+
+The repository includes a minimal container definition for local validation.
+Build it from the repository root:
+
+```
+docker build -t sae-demo .
+```
+
+Run it locally with configuration supplied at runtime from the same ignored
+`.env` file described above:
+
+```
+docker run --rm -p 8000:8000 --env-file .env sae-demo
+```
+
+Then open `http://127.0.0.1:8000`. The container binds Uvicorn to `0.0.0.0`
+and uses port `8000` by default. A deployment platform can override the
+container port through `PORT`; for example, local port `8080` can be tested
+with `docker run --rm -p 8080:8080 -e PORT=8080 --env-file .env sae-demo`.
+
+Secrets are supplied only at container runtime. `.env` is excluded from the
+Docker build context and is not copied into the image, and this repository does
+not contain a Nebius API key. The image includes the approved
+`demo_memory/despair_profile.json` at its existing runtime-relative path.
+
+This is deployment preparation only. No hosted Nebius deployment has been
+created or performed. Before making an inference-enabled instance publicly
+reachable, follow `docs/PUBLIC_DEPLOYMENT_SAFETY.md`.
+
 ## Key handling
 
 - You must provide your own Nebius API key — this project does not ship one and does not proxy or share a key.
